@@ -3,12 +3,14 @@ const sequelize = require("../config/db");
 
 /* ───────── STATES ───────── */
 const State = sequelize.define("State", {
-  id:       { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-  name:     { type: DataTypes.STRING, allowNull: false, unique: true },
-  code:     { type: DataTypes.STRING(5), allowNull: false, unique: true },
-  logo_url: { type: DataTypes.TEXT },
-  map_url:  { type: DataTypes.TEXT },
-  theme:    { type: DataTypes.JSONB, defaultValue: { primary: "#0d9488", secondary: "#d4a76a", bg: "#faf7f2" } },
+  id:        { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  name:      { type: DataTypes.STRING, allowNull: false, unique: true },
+  code:      { type: DataTypes.STRING(5), allowNull: false, unique: true },
+  logo_url:  { type: DataTypes.TEXT },
+  map_url:   { type: DataTypes.TEXT },
+  theme:     { type: DataTypes.JSONB, defaultValue: { primary: "#0d9488", secondary: "#d4a76a", bg: "#faf7f2" } },
+  symbol:    { type: DataTypes.JSONB, defaultValue: {} },       // { animal, bird, flower, tree, emoji }
+  languages: { type: DataTypes.JSONB, defaultValue: ["en"] },   // [{ code, name, native, default }]
 }, { tableName: "states", timestamps: true });
 
 /* ───────── USERS ───────── */

@@ -1,11 +1,13 @@
 /**
  * Abstract state map silhouette component.
- * Shows state code + a simple geometric representation.
+ * Shows state code, symbol emoji + a simple geometric representation.
  */
-export default function StateMap({ stateCode, stateName, activeProjects = 0, theme }) {
+export default function StateMap({ stateCode, stateName, activeProjects = 0, theme, symbol, labels = {} }) {
   return (
     <div className="bg-white rounded-xl shadow-card p-5 animate-fade-up-delay">
-      <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">State Map</h3>
+      <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+        {labels.stateMap || "State Map"}
+      </h3>
       <div className="flex items-center gap-4">
         {/* Abstract map silhouette */}
         <div
@@ -20,12 +22,17 @@ export default function StateMap({ stateCode, stateName, activeProjects = 0, the
             />
             <circle cx="50" cy="50" r="5" fill={theme?.secondary || "#d4a76a"} />
           </svg>
-          <span
-            className="absolute text-2xl font-heading font-bold"
-            style={{ color: theme?.primary }}
-          >
-            {stateCode}
-          </span>
+          <div className="absolute flex flex-col items-center">
+            {symbol?.emoji && (
+              <span className="text-2xl leading-none mb-0.5">{symbol.emoji}</span>
+            )}
+            <span
+              className="text-lg font-heading font-bold"
+              style={{ color: theme?.primary }}
+            >
+              {stateCode}
+            </span>
+          </div>
         </div>
 
         <div>
@@ -33,7 +40,8 @@ export default function StateMap({ stateCode, stateName, activeProjects = 0, the
             {stateName}
           </p>
           <p className="text-sm text-gray-500 mt-1">
-            <span className="font-semibold text-gray-700">{activeProjects}</span> Active Projects
+            <span className="font-semibold text-gray-700">{activeProjects}</span>{" "}
+            {labels.activeProjects || "Active Projects"}
           </p>
         </div>
       </div>
