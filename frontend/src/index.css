@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Global overrides ── */
+body {
+  background: linear-gradient(135deg, #faf7f2 0%, #f0ebe0 100%);
+  min-height: 100vh;
+}
+
+/* ── Smooth card entrance ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up {
+  animation: fadeUp 0.4s ease-out both;
+}
+.animate-fade-up-delay { animation: fadeUp 0.4s ease-out 0.1s both; }
+.animate-fade-up-delay-2 { animation: fadeUp 0.4s ease-out 0.2s both; }
+.animate-fade-up-delay-3 { animation: fadeUp 0.4s ease-out 0.3s both; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d4c4a0; border-radius: 3px; }
+
+/* ── Status badges ── */
+.badge-open       { @apply bg-emerald-100 text-emerald-700; }
+.badge-closed     { @apply bg-gray-200 text-gray-600; }
+.badge-awarded    { @apply bg-blue-100 text-blue-700; }
+.badge-in_progress { @apply bg-amber-100 text-amber-700; }
+.badge-completed  { @apply bg-teal-100 text-teal-700; }
+.badge-cancelled  { @apply bg-red-100 text-red-600; }
+.badge-pending    { @apply bg-yellow-100 text-yellow-700; }
+.badge-approved   { @apply bg-green-100 text-green-700; }
+.badge-rejected   { @apply bg-red-100 text-red-600; }
+.badge-verified   { @apply bg-indigo-100 text-indigo-700; }
