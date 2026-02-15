@@ -50,22 +50,44 @@ router.post(
 
 /* ── List bids for a tender (state gov / central) ── */
 router.get("/tender/:tenderId", authenticate, authorize("state_gov", "central_gov"), async (req, res) => {
-  const bids = await Bid.findAll({
-    where: { tender_id: req.params.tenderId },
-    include: [{ model: User, as: "contractor", attributes: ["id", "name", "reputation", "kyc_status"] }],
-    order: [["ai_score", "DESC"]],
-  });
-  res.json(bids);
+  try {
+    const bids = await Bid.findAll({
+      where: { tender_id: req.params.tenderId },
+      include: [{ model: User, as: "contractor", attributes: ["id", "name", "reputation", "kyc_status"] }],
+      order: [["ai_score", "DESC"]],
+    });
+    res.json(bids);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ── My bids (contractor) ── */
 router.get("/mine", authenticate, authorize("contractor"), async (req, res) => {
-  const bids = await Bid.findAll({
-    where: { contractor_id: req.user.id },
-    include: [{ model: Tender, attributes: ["id", "title", "status", "bid_deadline"] }],
-    order: [["createdAt", "DESC"]],
-  });
-  res.json(bids);
+  try {
+    const bids = await Bid.findAll({
+      where: { contractor_id: req.user.id },
+      include: [{ model: Tender, attributes: ["id", "title", "status", "bid_deadline", "location", "category"] }],
+      order: [["createdAt", "DESC"]],
+    });
+    res.json(bids);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* Alias for /mine */
+router.get("/my", authenticate, authorize("contractor"), async (req, res) => {
+  try {
+    const bids = await Bid.findAll({
+      where: { contractor_id: req.user.id },
+      include: [{ model: Tender, attributes: ["id", "title", "status", "bid_deadline", "location", "category"] }],
+      order: [["createdAt", "DESC"]],
+    });
+    res.json(bids);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

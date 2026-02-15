@@ -75,12 +75,16 @@ router.patch(
 
 /* ── List milestones for a contract ── */
 router.get("/contract/:contractId", authenticate, async (req, res) => {
-  const milestones = await Milestone.findAll({
-    where: { contract_id: req.params.contractId },
-    include: [{ model: Payment }],
-    order: [["sequence", "ASC"]],
-  });
-  res.json(milestones);
+  try {
+    const milestones = await Milestone.findAll({
+      where: { contract_id: req.params.contractId },
+      include: [{ model: Payment }],
+      order: [["sequence", "ASC"]],
+    });
+    res.json(milestones);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

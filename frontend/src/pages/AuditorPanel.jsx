@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import api from "../api/client";
 import { useAuth } from "../context/AuthContext";
-import { AlertTriangle, CheckCircle, XCircle, Eye } from "lucide-react";
+import { AlertTriangle, CheckCircle, XCircle, Eye, ClipboardCheck, ArrowRight } from "lucide-react";
 
 export default function AuditorPanel() {
   const { user } = useAuth();
@@ -37,6 +38,25 @@ export default function AuditorPanel() {
 
   return (
     <div className="space-y-6">
+      {/* Verification CTA */}
+      <Link
+        to="/verify"
+        className="block bg-gradient-to-r from-violet-500 to-purple-600 rounded-xl p-4 text-white shadow-md hover:shadow-lg transition"
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center">
+              <ClipboardCheck size={22} className="text-white" />
+            </div>
+            <div>
+              <p className="font-semibold">Work Proof Verification Center</p>
+              <p className="text-violet-100 text-sm">Review and verify contractor work proofs for active projects</p>
+            </div>
+          </div>
+          <ArrowRight size={20} className="text-violet-100" />
+        </div>
+      </Link>
+
       <div>
         <h2 className="font-heading font-bold text-2xl text-gray-800">Complaint Management</h2>
         <p className="text-sm text-gray-500 mt-1">Review, investigate, and resolve reports</p>

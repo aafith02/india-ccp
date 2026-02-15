@@ -48,6 +48,7 @@ const Tender = sequelize.define("Tender", {
   bid_deadline:   { type: DataTypes.DATE, allowNull: false },
   project_deadline:{ type: DataTypes.DATE, allowNull: false },
   status:         { type: DataTypes.ENUM("draft", "open", "closed", "awarded", "in_progress", "completed", "cancelled"), defaultValue: "draft" },
+  category:       { type: DataTypes.STRING },                    // e.g. road, bridge, building, water
   qualification:  { type: DataTypes.JSONB, defaultValue: {} },  // min requirements
 }, { tableName: "tenders", timestamps: true });
 
@@ -128,6 +129,36 @@ const ReputationCredit = sequelize.define("ReputationCredit", {
   project_id:  { type: DataTypes.UUID },
 }, { tableName: "reputation_credits", timestamps: true, updatedAt: false });
 
+/* ───────── WORK PROOFS (contractor uploads) ───────── */
+const WorkProof = sequelize.define("WorkProof", {
+  id:             { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  description:    { type: DataTypes.TEXT, allowNull: false },
+  photo_urls:     { type: DataTypes.JSONB, defaultValue: [] },       // [{ url, hash, geo, timestamp }]
+  work_percentage:{ type: DataTypes.FLOAT, allowNull: false },       // e.g. 30 means 30% of remaining work
+  amount_requested:{ type: DataTypes.DECIMAL(15, 2), allowNull: false },
+  status:         { type: DataTypes.ENUM("pending_review", "approved", "rejected"), defaultValue: "pending_review" },
+  review_notes:   { type: DataTypes.TEXT },
+  warning_count:  { type: DataTypes.INTEGER, defaultValue: 0 },
+  reviewed_by:    { type: DataTypes.UUID },
+  reviewed_at:    { type: DataTypes.DATE },
+}, { tableName: "work_proofs", timestamps: true });
+
+/* ───────── NOTIFICATIONS ───────── */
+const Notification = sequelize.define("Notification", {
+  id:          { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  type:        { type: DataTypes.ENUM(
+    "proof_submitted", "proof_approved", "proof_rejected",
+    "payment_released", "contract_awarded", "bid_won",
+    "milestone_due", "warning_issued", "verification_needed"
+  ), allowNull: false },
+  title:       { type: DataTypes.STRING, allowNull: false },
+  message:     { type: DataTypes.TEXT },
+  entity_type: { type: DataTypes.STRING },    // "work_proof", "milestone", "contract", etc.
+  entity_id:   { type: DataTypes.UUID },
+  is_read:     { type: DataTypes.BOOLEAN, defaultValue: false },
+  metadata:    { type: DataTypes.JSONB, defaultValue: {} },  // extra data (photo_urls, amounts, etc.)
+}, { tableName: "notifications", timestamps: true, updatedAt: false });
+
 /* ═══════════════════════════ RELATIONSHIPS ═══════════════════════════ */
 
 // State ↔ Users
@@ -172,6 +203,18 @@ Complaint.belongsTo(User, { as: "assignedTo", foreignKey: "assigned_to" });
 User.hasMany(ReputationCredit, { foreignKey: "user_id" });
 ReputationCredit.belongsTo(User, { foreignKey: "user_id" });
 
+// WorkProof → Milestone + Contract + User
+Milestone.hasMany(WorkProof, { foreignKey: "milestone_id" });
+WorkProof.belongsTo(Milestone, { foreignKey: "milestone_id" });
+Contract.hasMany(WorkProof, { foreignKey: "contract_id" });
+WorkProof.belongsTo(Contract, { foreignKey: "contract_id" });
+User.hasMany(WorkProof, { as: "submittedProofs", foreignKey: "submitted_by" });
+WorkProof.belongsTo(User, { as: "submittedBy", foreignKey: "submitted_by" });
+
+// Notifications → User
+User.hasMany(Notification, { foreignKey: "user_id" });
+Notification.belongsTo(User, { foreignKey: "user_id" });
+
 module.exports = {
   sequelize,
   State,
@@ -185,4 +228,6 @@ module.exports = {
   Complaint,
   AuditLog,
   ReputationCredit,
+  WorkProof,
+  Notification,
 };

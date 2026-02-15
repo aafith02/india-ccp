@@ -15,6 +15,7 @@ import FundingPage from "./pages/FundingPage";
 import PublicLedger from "./pages/PublicLedger";
 import AuditorPanel from "./pages/AuditorPanel";
 import ReportIssue from "./pages/ReportIssue";
+import VerificationPanel from "./pages/VerificationPanel";
 
 function ProtectedRoute({ children, roles }) {
   const { isAuthenticated, user } = useAuth();
@@ -60,6 +61,9 @@ export default function App() {
       {/* Complaints */}
       <Route path="/complaints" element={<ProtectedRoute roles={["state_gov", "central_gov", "auditor_ngo"]}><AuditorPanel /></ProtectedRoute>} />
       <Route path="/report" element={<ProtectedRoute><ReportIssue /></ProtectedRoute>} />
+
+      {/* Verification */}
+      <Route path="/verify" element={<ProtectedRoute roles={["auditor_ngo", "community", "state_gov"]}><VerificationPanel /></ProtectedRoute>} />
 
       {/* Public */}
       <Route path="/portal" element={<ProtectedRoute><CommunityPortal /></ProtectedRoute>} />

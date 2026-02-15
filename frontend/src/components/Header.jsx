@@ -1,6 +1,7 @@
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
-import { Bell, LogOut, User } from "lucide-react";
+import { LogOut, User } from "lucide-react";
+import NotificationBell from "./NotificationBell";
 
 export default function Header({ theme }) {
   const { user, logout } = useAuth();
@@ -25,10 +26,7 @@ export default function Header({ theme }) {
 
       <div className="flex items-center gap-4">
         {/* Notifications */}
-        <button className="relative p-2 rounded-lg hover:bg-sand-100 transition">
-          <Bell size={18} className="text-gray-500" />
-          <span className="absolute top-1 right-1 w-2 h-2 bg-coral-400 rounded-full"></span>
-        </button>
+        <NotificationBell theme={theme} />
 
         {/* User info */}
         <div className="flex items-center gap-3 pl-4 border-l border-sand-200">

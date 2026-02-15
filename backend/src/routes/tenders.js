@@ -13,7 +13,7 @@ router.post(
   auditMiddleware("TENDER_CREATE", "tender"),
   async (req, res) => {
     try {
-      const { title, description, scope, location, district, budget_hidden, bid_deadline, project_deadline, qualification } = req.body;
+      const { title, description, scope, location, district, budget_hidden, bid_deadline, project_deadline, qualification, category } = req.body;
       if (!title || !description || !budget_hidden || !bid_deadline || !project_deadline)
         return res.status(400).json({ error: "Missing required fields" });
 
@@ -24,6 +24,7 @@ router.post(
         budget_hidden,
         bid_deadline, project_deadline,
         qualification,
+        category,
         status: "open",
       });
       res.status(201).json(tender);
@@ -35,32 +36,40 @@ router.post(
 
 /* ── List tenders (public — hides budget) ── */
 router.get("/", async (req, res) => {
-  const { state_id, status } = req.query;
-  const where = {};
-  if (state_id) where.state_id = state_id;
-  if (status) where.status = status;
+  try {
+    const { state_id, status } = req.query;
+    const where = {};
+    if (state_id) where.state_id = state_id;
+    if (status) where.status = status;
 
-  const tenders = await Tender.findAll({
-    where,
-    attributes: { exclude: ["budget_hidden"] },
-    include: [{ model: State, attributes: ["name", "code"] }],
-    order: [["bid_deadline", "ASC"]],
-  });
-  res.json(tenders);
+    const tenders = await Tender.findAll({
+      where,
+      attributes: { exclude: ["budget_hidden"] },
+      include: [{ model: State, attributes: ["name", "code"] }],
+      order: [["bid_deadline", "ASC"]],
+    });
+    res.json(tenders);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ── Get tender detail ── */
 router.get("/:id", async (req, res) => {
-  const tender = await Tender.findByPk(req.params.id, {
-    attributes: { exclude: ["budget_hidden"] },
-    include: [
-      { model: State, attributes: ["name", "code", "logo_url"] },
-      { model: Bid, attributes: ["id", "amount", "status", "ai_score", "createdAt"],
-        include: [{ model: User, as: "contractor", attributes: ["id", "name", "reputation"] }] },
-    ],
-  });
-  if (!tender) return res.status(404).json({ error: "Tender not found" });
-  res.json(tender);
+  try {
+    const tender = await Tender.findByPk(req.params.id, {
+      attributes: { exclude: ["budget_hidden"] },
+      include: [
+        { model: State, attributes: ["name", "code", "logo_url"] },
+        { model: Bid, attributes: ["id", "amount", "status", "ai_score", "createdAt"],
+          include: [{ model: User, as: "contractor", attributes: ["id", "name", "reputation"] }] },
+      ],
+    });
+    if (!tender) return res.status(404).json({ error: "Tender not found" });
+    res.json(tender);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ── Close bidding (auto or manual) ── */

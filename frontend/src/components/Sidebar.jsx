@@ -2,7 +2,7 @@ import { NavLink } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import {
   LayoutDashboard, FileText, Gavel, Wallet, Users, Shield,
-  AlertTriangle, Globe, BookOpen, Building2
+  AlertTriangle, Globe, BookOpen, Building2, Eye, ClipboardCheck
 } from "lucide-react";
 
 const navItems = {
@@ -19,6 +19,7 @@ const navItems = {
     { to: "/funding",     icon: Wallet,          label: "Fund Requests" },
     { to: "/tenders",     icon: FileText,        label: "Tenders" },
     { to: "/contracts",   icon: Gavel,           label: "Contracts" },
+    { to: "/verify",      icon: ClipboardCheck,  label: "Verify Work" },
     { to: "/contractors", icon: Users,           label: "Contractors" },
     { to: "/complaints",  icon: AlertTriangle,   label: "Complaints" },
   ],
@@ -30,11 +31,13 @@ const navItems = {
   ],
   community: [
     { to: "/portal",      icon: Globe,           label: "Projects" },
+    { to: "/verify",      icon: Eye,             label: "Verify Projects" },
     { to: "/ledger",      icon: BookOpen,        label: "Public Ledger" },
     { to: "/report",      icon: AlertTriangle,   label: "Report Issue" },
   ],
   auditor_ngo: [
     { to: "/dashboard",   icon: LayoutDashboard, label: "Dashboard" },
+    { to: "/verify",      icon: ClipboardCheck,  label: "Verify Work" },
     { to: "/complaints",  icon: AlertTriangle,   label: "Complaints" },
     { to: "/ledger",      icon: BookOpen,        label: "Audit Ledger" },
   ],

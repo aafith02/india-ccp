@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import api from "../api/client";
 import TenderCard from "../components/TenderCard";
 import ComplaintForm from "../components/ComplaintForm";
-import { Globe, Search } from "lucide-react";
+import { Globe, Search, ClipboardCheck, ArrowRight } from "lucide-react";
 
 export default function CommunityPortal() {
   const [tenders, setTenders] = useState([]);
@@ -40,6 +41,25 @@ export default function CommunityPortal() {
         <h1 className="font-heading font-bold text-3xl text-gray-800">Community Portal</h1>
         <p className="text-gray-500 mt-2">Track public tenders, view transactions, and report issues</p>
       </div>
+
+      {/* Verification CTA */}
+      <Link
+        to="/verify"
+        className="block bg-gradient-to-r from-teal-500 to-emerald-600 rounded-xl p-4 text-white shadow-md hover:shadow-lg transition animate-fade-up"
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center">
+              <ClipboardCheck size={22} className="text-white" />
+            </div>
+            <div>
+              <p className="font-semibold">Community Verification Center</p>
+              <p className="text-teal-100 text-sm">Help verify contractor work proofs &amp; ensure project quality</p>
+            </div>
+          </div>
+          <ArrowRight size={20} className="text-teal-100" />
+        </div>
+      </Link>
 
       {/* Filters */}
       <div className="bg-white rounded-xl shadow-card p-4 flex flex-wrap gap-3 animate-fade-up-delay">

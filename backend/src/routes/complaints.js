@@ -29,20 +29,24 @@ router.post(
 
 /* ── List complaints ── */
 router.get("/", authenticate, authorize("central_gov", "state_gov", "auditor_ngo"), async (req, res) => {
-  const { status, severity } = req.query;
-  const where = {};
-  if (status) where.status = status;
-  if (severity) where.severity = severity;
+  try {
+    const { status, severity } = req.query;
+    const where = {};
+    if (status) where.status = status;
+    if (severity) where.severity = severity;
 
-  const complaints = await Complaint.findAll({
-    where,
-    include: [
-      { model: User, as: "reporter", attributes: ["id", "name", "role"] },
-      { model: Tender, attributes: ["id", "title", "state_id"] },
-    ],
-    order: [["createdAt", "DESC"]],
-  });
-  res.json(complaints);
+    const complaints = await Complaint.findAll({
+      where,
+      include: [
+        { model: User, as: "reporter", attributes: ["id", "name", "role"] },
+        { model: Tender, attributes: ["id", "title", "state_id"] },
+      ],
+      order: [["createdAt", "DESC"]],
+    });
+    res.json(complaints);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ── Update complaint status (auditor/ngo or central_gov) ── */

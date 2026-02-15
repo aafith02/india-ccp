@@ -14,16 +14,18 @@ app.use(express.urlencoded({ extended: true }));
 app.get("/api/health", (_req, res) => res.json({ status: "ok", ts: new Date().toISOString() }));
 
 /* ── Routes ── */
-app.use("/api/auth",       require("./routes/auth"));
-app.use("/api/states",     require("./routes/states"));
-app.use("/api/funding",    require("./routes/funding"));
-app.use("/api/tenders",    require("./routes/tenders"));
-app.use("/api/bids",       require("./routes/bids"));
-app.use("/api/contracts",  require("./routes/contracts"));
-app.use("/api/milestones", require("./routes/milestones"));
-app.use("/api/complaints", require("./routes/complaints"));
-app.use("/api/chatbot",    require("./routes/chatbot"));
-app.use("/api/public",     require("./routes/public"));
+app.use("/api/auth",          require("./routes/auth"));
+app.use("/api/states",        require("./routes/states"));
+app.use("/api/funding",       require("./routes/funding"));
+app.use("/api/tenders",       require("./routes/tenders"));
+app.use("/api/bids",          require("./routes/bids"));
+app.use("/api/contracts",     require("./routes/contracts"));
+app.use("/api/milestones",    require("./routes/milestones"));
+app.use("/api/complaints",    require("./routes/complaints"));
+app.use("/api/chatbot",       require("./routes/chatbot"));
+app.use("/api/public",        require("./routes/public"));
+app.use("/api/notifications", require("./routes/notifications"));
+app.use("/api/work-proofs",   require("./routes/workProofs"));
 
 /* ── Error handler ── */
 app.use((err, _req, res, _next) => {
