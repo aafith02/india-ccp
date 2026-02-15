@@ -8,7 +8,9 @@
     "dev": "nodemon src/index.js",
     "migrate": "node src/migrations/run.js",
     "seed": "node src/seed/states.js",
-    "seed:users": "node src/seed/users.js"
+    "seed:users": "node src/seed/users.js",
+    "seed:dummy": "node src/seed/dummyData.js",
+    "seed:all": "node src/seed/states.js && node src/seed/dummyData.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
