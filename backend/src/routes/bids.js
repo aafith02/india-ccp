@@ -1,92 +1,115 @@
 const router = require("express").Router();
-const { Bid, Tender, User } = require("../models");
+const { Bid, Tender, User, State } = require("../models");
 const { authenticate } = require("../middleware/auth");
 const { authorize } = require("../middleware/roles");
-const { auditMiddleware } = require("../middleware/auditLog");
-const { scoreBid } = require("../services/bidEvaluation");
+const { writeAudit } = require("../middleware/auditLog");
+const { scoreBid, detectCollusion } = require("../services/bidEvaluation");
+const { createBidRules, paginationRules, validate } = require("../middleware/validation");
 
-/* ── Submit bid (contractor, same state only) ── */
-router.post(
-  "/",
-  authenticate,
-  authorize("contractor"),
-  auditMiddleware("BID_SUBMIT", "bid"),
-  async (req, res) => {
-    try {
-      const { tender_id, amount, proposal, timeline_days, doc_hashes } = req.body;
-      if (!tender_id || !amount) return res.status(400).json({ error: "tender_id and amount required" });
+/* ── Calculate proximity score ── */
+function proximityScore(bidAmount, hiddenBudget) {
+  const bid = parseFloat(bidAmount);
+  const budget = parseFloat(hiddenBudget);
+  if (budget === 0) return 0;
+  const diff = Math.abs(bid - budget) / budget;
+  return Math.max(0, Math.round((1 - diff * 2) * 100));
+}
 
-      // Verify KYC
-      if (req.user.kyc_status !== "verified")
-        return res.status(403).json({ error: "KYC not verified" });
+/* ═══════════════════════════════════════════════════════════════════
+   POST / — Submit a bid (uses bidEvaluation for AI score)
+   ═══════════════════════════════════════════════════════════════════ */
+router.post("/", authenticate, authorize("contractor"), createBidRules, validate, async (req, res) => {
+  try {
+    const { tender_id, amount, proposal, timeline_days } = req.body;
 
-      // Verify tender is open & same state
-      const tender = await Tender.findByPk(tender_id);
-      if (!tender) return res.status(404).json({ error: "Tender not found" });
-      if (tender.status !== "open") return res.status(400).json({ error: "Tender not accepting bids" });
-      if (new Date() > new Date(tender.bid_deadline))
-        return res.status(400).json({ error: "Bid deadline passed" });
-      if (tender.state_id !== req.user.state_id)
-        return res.status(403).json({ error: "You can only bid in your state" });
-
-      // Check duplicate bid
-      const existing = await Bid.findOne({ where: { tender_id, contractor_id: req.user.id } });
-      if (existing) return res.status(409).json({ error: "Already submitted a bid" });
-
-      // AI score
-      const ai_score = scoreBid({ amount, budget: tender.budget_hidden, reputation: req.user.reputation, timeline_days });
-
-      const bid = await Bid.create({
-        tender_id, contractor_id: req.user.id,
-        amount, proposal, timeline_days, doc_hashes, ai_score,
-      });
-
-      res.status(201).json(bid);
-    } catch (err) {
-      res.status(500).json({ error: err.message });
+    if (req.user.kyc_status !== "verified") {
+      return res.status(403).json({ error: "KYC must be verified before bidding" });
     }
-  }
-);
 
-/* ── List bids for a tender (state gov / central) ── */
+    const tender = await Tender.findByPk(tender_id);
+    if (!tender) return res.status(404).json({ error: "Tender not found" });
+    if (tender.status !== "open") return res.status(400).json({ error: "Tender is not open for bidding" });
+    if (new Date() > new Date(tender.bid_deadline)) return res.status(400).json({ error: "Bid deadline passed" });
+
+    if (req.user.state_id !== tender.state_id) {
+      return res.status(403).json({ error: "Contractors can only bid on tenders in their registered state" });
+    }
+
+    const existing = await Bid.findOne({ where: { tender_id, contractor_id: req.user.id } });
+    if (existing) return res.status(409).json({ error: "You have already bid on this tender" });
+
+    // Original proximity score
+    const pScore = proximityScore(amount, tender.budget_hidden);
+
+    // AI multi-criteria score from bidEvaluation service
+    const aiScore = scoreBid({
+      amount,
+      budget: tender.budget_hidden,
+      reputation: req.user.reputation || 0,
+      timeline_days: timeline_days || null,
+    });
+
+    const bid = await Bid.create({
+      tender_id,
+      contractor_id: req.user.id,
+      amount,
+      proposal: proposal || "",
+      timeline_days: timeline_days || null,
+      proximity_score: pScore,
+      ai_score: aiScore,
+    });
+
+    await writeAudit({
+      actor_id: req.user.id, actor_role: "contractor", actor_name: req.user.name,
+      action: "BID_SUBMITTED", entity_type: "bid", entity_id: bid.id,
+      details: { tender_id, amount, proximity_score: pScore, ai_score: aiScore },
+    });
+
+    res.status(201).json({ bid: { ...bid.toJSON(), proximity_score: pScore, ai_score: aiScore } });
+  } catch (err) {
+    console.error("Bid submit error:", err);
+    res.status(500).json({ error: "Failed to submit bid" });
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════════
+   GET /tender/:tenderId — List bids with collusion detection
+   ═══════════════════════════════════════════════════════════════════ */
 router.get("/tender/:tenderId", authenticate, authorize("state_gov", "central_gov"), async (req, res) => {
   try {
     const bids = await Bid.findAll({
       where: { tender_id: req.params.tenderId },
-      include: [{ model: User, as: "contractor", attributes: ["id", "name", "reputation", "kyc_status"] }],
-      order: [["ai_score", "DESC"]],
+      include: [{ model: User, as: "contractor", attributes: ["id", "name", "email", "reputation", "points", "kyc_status"] }],
+      order: [["ai_score", "DESC"], ["proximity_score", "DESC"]],
     });
-    res.json(bids);
+
+    // Run collusion detection
+    const collusionFlags = detectCollusion(bids);
+
+    res.json({ bids, collusionFlags });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch bids" });
   }
 });
 
-/* ── My bids (contractor) ── */
-router.get("/mine", authenticate, authorize("contractor"), async (req, res) => {
+/* ═══════════════════════════════════════════════════════════════════
+   GET /my — My bids (contractor) with PAGINATION
+   ═══════════════════════════════════════════════════════════════════ */
+router.get("/my", authenticate, authorize("contractor"), paginationRules, validate, async (req, res) => {
   try {
-    const bids = await Bid.findAll({
-      where: { contractor_id: req.user.id },
-      include: [{ model: Tender, attributes: ["id", "title", "status", "bid_deadline", "location", "category"] }],
-      order: [["createdAt", "DESC"]],
-    });
-    res.json(bids);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
 
-/* Alias for /mine */
-router.get("/my", authenticate, authorize("contractor"), async (req, res) => {
-  try {
-    const bids = await Bid.findAll({
+    const { count, rows } = await Bid.findAndCountAll({
       where: { contractor_id: req.user.id },
-      include: [{ model: Tender, attributes: ["id", "title", "status", "bid_deadline", "location", "category"] }],
+      include: [{ model: Tender, attributes: ["id", "title", "status", "location", "bid_deadline"], include: [{ model: State, attributes: ["name", "code"] }] }],
       order: [["createdAt", "DESC"]],
+      limit, offset,
     });
-    res.json(bids);
+    res.json({ bids: rows, pagination: { page, limit, total: count, pages: Math.ceil(count / limit) } });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch bids" });
   }
 });
 

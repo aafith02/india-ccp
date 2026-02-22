@@ -1,268 +1,307 @@
 const router = require("express").Router();
-const { Contract, Tender, Bid, Milestone, User, ReputationCredit, Payment } = require("../models");
-const { authenticate } = require("../middleware/auth");
+const { Op } = require("sequelize");
+const { sequelize, Contract, ContractTranche, Tender, Bid, User, State, Milestone, Payment } = require("../models");
+const { authenticate, generateSignature } = require("../middleware/auth");
 const { authorize } = require("../middleware/roles");
-const { auditMiddleware, writeAudit } = require("../middleware/auditLog");
+const { writeAudit } = require("../middleware/auditLog");
 const { notifyUser } = require("../services/notificationService");
+const { adjustPoints, adjustReputation, POINTS, REPUTATION } = require("../services/pointsService");
+const { scoreBid, rankBids } = require("../services/bidEvaluation");
+const { isValidTransition } = require("../middleware/tenderStateMachine");
+const { paginationRules, validate } = require("../middleware/validation");
 
-/* ── Auto-award tender to closest bidder → create contract + milestones + 20% initial payment ── */
-router.post(
-  "/auto-award",
-  authenticate,
-  authorize("state_gov"),
-  auditMiddleware("CONTRACT_AUTO_AWARD", "contract"),
-  async (req, res) => {
-    try {
-      const { tender_id, milestones } = req.body;
-      if (!tender_id || !milestones?.length)
-        return res.status(400).json({ error: "tender_id and milestones[] required" });
-
-      const tender = await Tender.findByPk(tender_id);
-      if (!tender || tender.state_id !== req.user.state_id)
-        return res.status(403).json({ error: "Unauthorized" });
-
-      if (tender.status !== "closed" && tender.status !== "open")
-        return res.status(400).json({ error: "Tender must be open or closed to award" });
-
-      // Find all bids for this tender, sorted by AI score (closest bid wins)
-      const bids = await Bid.findAll({
-        where: { tender_id },
-        order: [["ai_score", "DESC"]],
-        include: [{ model: User, as: "contractor", attributes: ["id", "name", "reputation", "kyc_status"] }],
-      });
-
-      if (bids.length === 0)
-        return res.status(400).json({ error: "No bids submitted for this tender" });
-
-      // The highest AI-scored bid wins (closest to budget gets highest score)
-      const winningBid = bids[0];
-
-      // Mark winning bid as awarded, others as rejected
-      await Bid.update(
-        { status: "rejected" },
-        { where: { tender_id, id: { [require("sequelize").Op.ne]: winningBid.id } } }
-      );
-      winningBid.status = "awarded";
-      await winningBid.save();
-
-      // Update tender status
-      tender.status = "awarded";
-      await tender.save();
-
-      const totalAmount = parseFloat(winningBid.amount);
-
-      // Create contract
-      const contract = await Contract.create({
-        tender_id,
-        contractor_id: winningBid.contractor_id,
-        total_amount: totalAmount,
-        escrow_balance: totalAmount,
-      });
-
-      // Create milestones
-      const msRecords = await Promise.all(
-        milestones.map((m, i) =>
-          Milestone.create({
-            contract_id: contract.id,
-            title: m.title,
-            description: m.description,
-            amount: m.amount,
-            due_date: m.due_date,
-            sequence: i + 1,
-          })
-        )
-      );
-
-      // === 20% Initial Payment ===
-      const initialAmount = Math.round(totalAmount * 0.20 * 100) / 100;
-      const initialPayment = await Payment.create({
-        milestone_id: msRecords[0]?.id || null,
-        amount: initialAmount,
-        status: "released",
-        released_at: new Date(),
-        tx_hash: `TX-INITIAL-${Date.now()}-${contract.id.slice(0, 8)}`,
-        method: "initial_disbursement",
-      });
-
-      // Deduct from escrow
-      contract.escrow_balance = totalAmount - initialAmount;
-      await contract.save();
-
-      // Update tender to in_progress
-      tender.status = "in_progress";
-      await tender.save();
-
-      // Notify the winning contractor
-      await notifyUser({
-        user_id: winningBid.contractor_id,
-        type: "contract_awarded",
-        title: "🎉 Contract Awarded!",
-        message: `Your bid for "${tender.title}" has been awarded! Contract amount: ₹${totalAmount.toLocaleString("en-IN")}. An initial payment of 20% (₹${initialAmount.toLocaleString("en-IN")}) has been disbursed.`,
-        entity_type: "contract",
-        entity_id: contract.id,
-        metadata: { initial_payment: initialAmount, total_amount: totalAmount },
-      });
-
-      await notifyUser({
-        user_id: winningBid.contractor_id,
-        type: "payment_released",
-        title: "Initial Payment Released",
-        message: `₹${initialAmount.toLocaleString("en-IN")} (20% advance) has been released for "${tender.title}".`,
-        entity_type: "payment",
-        entity_id: initialPayment.id,
-      });
-
-      res.status(201).json({
-        contract,
-        milestones: msRecords,
-        winning_bid: winningBid,
-        initial_payment: initialPayment,
-        all_bids_count: bids.length,
-      });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
+/* ── Helper: create tranches ── */
+function createTranches(contractId, totalAmount, count) {
+  const trancheAmount = Math.floor((parseFloat(totalAmount) / count) * 100) / 100;
+  const remainder = parseFloat(totalAmount) - (trancheAmount * count);
+  const tranches = [];
+  for (let i = 1; i <= count; i++) {
+    tranches.push({
+      contract_id: contractId,
+      sequence: i,
+      amount: i === count ? trancheAmount + remainder : trancheAmount,
+      status: "pending",
+    });
   }
-);
+  return tranches;
+}
 
-/* ── Award tender → create contract + milestones (manual selection) ── */
-router.post(
-  "/award",
-  authenticate,
-  authorize("state_gov"),
-  auditMiddleware("CONTRACT_AWARD", "contract"),
-  async (req, res) => {
-    try {
-      const { tender_id, bid_id, milestones } = req.body;
-      if (!tender_id || !bid_id || !milestones?.length)
-        return res.status(400).json({ error: "tender_id, bid_id, milestones[] required" });
+/* ═══════════════════════════════════════════════════════════════════
+   POST /award — Award tender using AI multi-criteria scoring
+   WRAPPED IN TRANSACTION
+   ═══════════════════════════════════════════════════════════════════ */
+router.post("/award", authenticate, authorize("state_gov"), async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const { tender_id, tranche_count } = req.body;
+    if (!tender_id) return res.status(400).json({ error: "tender_id required" });
 
-      const tender = await Tender.findByPk(tender_id);
-      if (!tender || tender.state_id !== req.user.state_id)
-        return res.status(403).json({ error: "Unauthorized" });
-
-      const bid = await Bid.findByPk(bid_id);
-      if (!bid || bid.tender_id !== tender_id)
-        return res.status(400).json({ error: "Bid mismatch" });
-
-      // Mark bid as awarded, others as rejected
-      await Bid.update({ status: "rejected" }, { where: { tender_id, id: { [require("sequelize").Op.ne]: bid_id } } });
-      bid.status = "awarded";
-      await bid.save();
-
-      // Update tender
-      tender.status = "awarded";
-      await tender.save();
-
-      // Create contract
-      const contract = await Contract.create({
-        tender_id,
-        contractor_id: bid.contractor_id,
-        total_amount: bid.amount,
-        escrow_balance: bid.amount,
-      });
-
-      // Create milestones
-      const msRecords = await Promise.all(
-        milestones.map((m, i) =>
-          Milestone.create({
-            contract_id: contract.id,
-            title: m.title,
-            description: m.description,
-            amount: m.amount,
-            due_date: m.due_date,
-            sequence: i + 1,
-          })
-        )
-      );
-
-      res.status(201).json({ contract, milestones: msRecords });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
+    const tender = await Tender.findByPk(tender_id, { transaction: t });
+    if (!tender) { await t.rollback(); return res.status(404).json({ error: "Tender not found" }); }
+    if (!["closed", "open"].includes(tender.status)) {
+      await t.rollback();
+      return res.status(400).json({ error: "Tender must be closed or open to award" });
     }
-  }
-);
 
-/* ── Get my contracts (contractor) ── */
-router.get("/my", authenticate, async (req, res) => {
+    if (req.user.state_id !== tender.state_id) {
+      await t.rollback();
+      return res.status(403).json({ error: "You can only award tenders in your state" });
+    }
+
+    // Fetch all submitted bids with contractor info
+    const bids = await Bid.findAll({
+      where: { tender_id, status: "submitted" },
+      include: [{ model: User, as: "contractor", attributes: ["id", "name", "kyc_status", "reputation"] }],
+      transaction: t,
+    });
+
+    if (!bids.length) { await t.rollback(); return res.status(400).json({ error: "No bids found" }); }
+
+    // Score each bid using AI multi-criteria evaluation
+    const scoredBids = bids.map(bid => {
+      const aiScore = scoreBid({
+        amount: bid.amount,
+        budget: tender.budget_hidden,
+        reputation: bid.contractor?.reputation || 0,
+        timeline_days: bid.timeline_days,
+      });
+      return { ...bid.toJSON(), ai_score: aiScore, contractor: bid.contractor };
+    });
+
+    // Rank bids by AI score
+    const ranked = rankBids(scoredBids);
+    const winnerRank = ranked[0];
+    const winningBid = bids.find(b => b.id === winnerRank.bid_id);
+
+    if (winningBid.contractor.kyc_status !== "verified") {
+      await t.rollback();
+      return res.status(400).json({ error: "Winning contractor KYC not verified" });
+    }
+
+    // Update all bids with their AI scores
+    for (const scored of scoredBids) {
+      await Bid.update({ ai_score: scored.ai_score }, { where: { id: scored.id }, transaction: t });
+    }
+
+    const numTranches = tranche_count || tender.tranche_count || 5;
+    const totalAmount = parseFloat(winningBid.amount);
+    const sig = generateSignature(req.user.id, "AWARD_CONTRACT", tender_id);
+
+    const contract = await Contract.create({
+      tender_id,
+      contractor_id: winningBid.contractor_id,
+      total_amount: totalAmount,
+      escrow_balance: totalAmount,
+      tranche_count: numTranches,
+      current_tranche: 1,
+      awarded_by: req.user.id,
+      signature_hash: sig,
+    }, { transaction: t });
+
+    const trancheData = createTranches(contract.id, totalAmount, numTranches);
+    const tranches = await ContractTranche.bulkCreate(trancheData, { transaction: t });
+
+    // Disburse first tranche
+    const firstTranche = tranches.find(tr => tr.sequence === 1);
+    const disburseSig = generateSignature(req.user.id, "DISBURSE_TRANCHE", firstTranche.id);
+    await firstTranche.update({
+      status: "disbursed", disbursed_at: new Date(),
+      disbursed_by: req.user.id, signature_hash: disburseSig,
+    }, { transaction: t });
+
+    await Payment.create({
+      tranche_id: firstTranche.id, amount: firstTranche.amount,
+      status: "released", released_at: new Date(),
+      released_by: req.user.id, signature_hash: disburseSig,
+      tx_hash: `TG-PAY-${Date.now()}`,
+    }, { transaction: t });
+
+    await contract.update({
+      escrow_balance: totalAmount - parseFloat(firstTranche.amount),
+    }, { transaction: t });
+
+    await winningBid.update({ status: "awarded" }, { transaction: t });
+
+    await Bid.update(
+      { status: "rejected" },
+      { where: { tender_id, id: { [Op.ne]: winningBid.id } }, transaction: t }
+    );
+
+    await tender.update({ status: "in_progress" }, { transaction: t });
+
+    // Deduct from state balance
+    const state = await State.findByPk(tender.state_id, { transaction: t });
+    if (state) {
+      await state.update({
+        balance: parseFloat(state.balance || 0) - totalAmount,
+        total_allocated: parseFloat(state.total_allocated || 0) + totalAmount,
+      }, { transaction: t });
+    }
+
+    // Create milestones
+    for (let i = 0; i < numTranches; i++) {
+      await Milestone.create({
+        contract_id: contract.id,
+        title: `Phase ${i + 1}`,
+        description: i === 0 ? "Initial mobilisation — tranche disbursed" : `Phase ${i + 1} — submit work proof to unlock tranche`,
+        sequence: i + 1,
+        amount: tranches[i].amount,
+        status: i === 0 ? "in_progress" : "pending",
+      }, { transaction: t });
+    }
+
+    await t.commit();
+
+    // Post-commit: audit, notify (non-critical)
+    await writeAudit({
+      actor_id: req.user.id, actor_role: "state_gov", actor_name: req.user.name,
+      action: "CONTRACT_AWARDED", entity_type: "contract", entity_id: contract.id,
+      details: { tender_id, contractor_id: winningBid.contractor_id, total_amount: totalAmount, ai_score: winnerRank.ai_score },
+      signature_hash: sig,
+    });
+
+    await notifyUser({
+      user_id: winningBid.contractor_id, type: "contract_awarded",
+      title: "Contract Awarded!",
+      message: `You won the contract for "${tender.title}". First tranche of Rs ${firstTranche.amount} disbursed.`,
+      entity_type: "contract", entity_id: contract.id,
+    });
+
+    res.status(201).json({
+      contract, tranches, rankings: ranked,
+      winning_bid: { id: winningBid.id, amount: winningBid.amount, ai_score: winnerRank.ai_score },
+      message: `Contract awarded via AI scoring. First tranche disbursed.`,
+    });
+  } catch (err) {
+    await t.rollback();
+    console.error("Award error:", err);
+    res.status(500).json({ error: "Failed to award contract" });
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════════
+   GET /my — Contractor's contracts
+   ═══════════════════════════════════════════════════════════════════ */
+router.get("/my", authenticate, authorize("contractor"), async (req, res) => {
   try {
     const contracts = await Contract.findAll({
       where: { contractor_id: req.user.id },
       include: [
-        { model: Tender, attributes: ["id", "title", "location", "category", "status"] },
+        { model: Tender, attributes: ["id", "title", "status", "location", "district"], include: [{ model: State, attributes: ["name", "code"] }] },
+        { model: ContractTranche, order: [["sequence", "ASC"]] },
         { model: Milestone, order: [["sequence", "ASC"]] },
       ],
       order: [["createdAt", "DESC"]],
     });
-    res.json(contracts);
+    res.json({ contracts });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch contracts" });
   }
 });
 
-/* ── Get contract detail ── */
+/* ═══════════════════════════════════════════════════════════════════
+   GET /:id — Contract detail
+   ═══════════════════════════════════════════════════════════════════ */
 router.get("/:id", authenticate, async (req, res) => {
   try {
     const contract = await Contract.findByPk(req.params.id, {
       include: [
-        { model: Tender, attributes: ["id", "title", "location", "category", "status"] },
-        { model: User, as: "contractor", attributes: ["id", "name", "reputation"] },
+        { model: Tender, include: [{ model: State }] },
+        { model: User, as: "contractor", attributes: ["id", "name", "email", "reputation", "points"] },
+        { model: ContractTranche, order: [["sequence", "ASC"]], include: [{ model: Payment }] },
         { model: Milestone, order: [["sequence", "ASC"]] },
       ],
     });
-    if (!contract) return res.status(404).json({ error: "Not found" });
-    res.json(contract);
+    if (!contract) return res.status(404).json({ error: "Contract not found" });
+    res.json({ contract });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch contract" });
   }
 });
 
-/* ── List contracts for state ── */
-router.get("/", authenticate, authorize("state_gov", "central_gov"), async (req, res) => {
+/* ═══════════════════════════════════════════════════════════════════
+   GET / — List contracts with PAGINATION
+   ═══════════════════════════════════════════════════════════════════ */
+router.get("/", authenticate, authorize("state_gov", "central_gov"), paginationRules, validate, async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+
     const include = [
-      { model: Tender, attributes: ["id", "title", "state_id", "status"] },
+      { model: Tender, attributes: ["id", "title", "status", "location"], include: [{ model: State, attributes: ["name", "code"] }] },
       { model: User, as: "contractor", attributes: ["id", "name"] },
+      { model: ContractTranche },
     ];
-    const contracts = req.user.role === "central_gov"
-      ? await Contract.findAll({ include, order: [["createdAt", "DESC"]] })
-      : await Contract.findAll({
-          include: [{ ...include[0], where: { state_id: req.user.state_id } }, include[1]],
-          order: [["createdAt", "DESC"]],
-        });
-    res.json(contracts);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
-/* ── Complete contract (state gov) ── */
-router.patch(
-  "/:id/complete",
-  authenticate,
-  authorize("state_gov"),
-  auditMiddleware("CONTRACT_COMPLETE", "contract"),
-  async (req, res) => {
-    const contract = await Contract.findByPk(req.params.id);
-    if (!contract) return res.status(404).json({ error: "Not found" });
+    const where = {};
+    if (req.user.role === "state_gov") {
+      // Filter by state via Tender association
+      include[0] = { ...include[0], where: { state_id: req.user.state_id } };
+    }
 
-    contract.status = "completed";
-    await contract.save();
-
-    // Award reputation credit
-    await ReputationCredit.create({
-      user_id: contract.contractor_id,
-      points: 10,
-      reason: "Project completed successfully",
-      project_id: contract.tender_id,
+    const { count, rows } = await Contract.findAndCountAll({
+      where, include, order: [["createdAt", "DESC"]], limit, offset,
     });
 
-    // Update contractor reputation
-    const credits = await ReputationCredit.sum("points", { where: { user_id: contract.contractor_id } });
-    await User.update({ reputation: credits }, { where: { id: contract.contractor_id } });
-
-    res.json(contract);
+    res.json({ contracts: rows, pagination: { page, limit, total: count, pages: Math.ceil(count / limit) } });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch contracts" });
   }
-);
+});
+
+/* ═══════════════════════════════════════════════════════════════════
+   PATCH /:id/complete — Mark contract completed (WITH TRANSACTION)
+   ═══════════════════════════════════════════════════════════════════ */
+router.patch("/:id/complete", authenticate, authorize("state_gov", "central_gov"), async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const contract = await Contract.findByPk(req.params.id, {
+      include: [{ model: Tender }],
+      transaction: t,
+    });
+    if (!contract) { await t.rollback(); return res.status(404).json({ error: "Contract not found" }); }
+    if (contract.status !== "active") { await t.rollback(); return res.status(400).json({ error: "Contract is not active" }); }
+
+    const sig = generateSignature(req.user.id, "COMPLETE_CONTRACT", contract.id);
+    await contract.update({ status: "completed" }, { transaction: t });
+    await contract.Tender.update({ status: "completed" }, { transaction: t });
+
+    await adjustPoints({
+      user_id: contract.contractor_id, points: POINTS.PROJECT_COMPLETION,
+      reason: "Project completed successfully",
+      reference_type: "contract", reference_id: contract.id,
+      transaction: t,
+    });
+
+    await adjustReputation({
+      user_id: contract.contractor_id,
+      delta: REPUTATION.CONTRACT_COMPLETED,
+      transaction: t,
+    });
+
+    await t.commit();
+
+    await writeAudit({
+      actor_id: req.user.id, actor_role: req.user.role, actor_name: req.user.name,
+      action: "CONTRACT_COMPLETED", entity_type: "contract", entity_id: contract.id,
+      details: { contractor_id: contract.contractor_id, total_amount: contract.total_amount },
+      signature_hash: sig,
+    });
+
+    await notifyUser({
+      user_id: contract.contractor_id, type: "contract_completed",
+      title: "Project Completed!",
+      message: `Project "${contract.Tender.title}" marked complete. You earned ${POINTS.PROJECT_COMPLETION} points!`,
+      entity_type: "contract", entity_id: contract.id,
+    });
+
+    res.json({ message: "Contract completed", contract });
+  } catch (err) {
+    await t.rollback();
+    console.error("Complete error:", err);
+    res.status(500).json({ error: "Failed to complete contract" });
+  }
+});
 
 module.exports = router;

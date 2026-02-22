@@ -1,121 +1,67 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import api from "../api/client";
-import { Gavel, IndianRupee, Clock, FileText } from "lucide-react";
 
 export default function BidSubmission() {
-  const { id: tenderId } = useParams();
-  const navigate = useNavigate();
-  const [form, setForm] = useState({ amount: "", proposal: "", timeline_days: "" });
-  const [submitting, setSubmitting] = useState(false);
+  const { id } = useParams();
+  const nav = useNavigate();
+  const [tender, setTender] = useState(null);
+  const [form, setForm] = useState({ amount: "", timeline_days: "", proposal: "" });
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e) => {
+  useEffect(() => {
+    api.get(`/tenders/${id}`).then(r => setTender(r.data.tender)).catch(() => {});
+  }, [id]);
+
+  const set = (k) => (e) => setForm(p => ({ ...p, [k]: e.target.value }));
+
+  async function handleSubmit(e) {
     e.preventDefault();
     setError("");
-    setSubmitting(true);
+    setLoading(true);
     try {
       await api.post("/bids", {
-        tender_id: tenderId,
-        amount: parseFloat(form.amount),
+        tender_id: id,
+        amount: Number(form.amount),
+        timeline_days: Number(form.timeline_days),
         proposal: form.proposal,
-        timeline_days: parseInt(form.timeline_days) || null,
       });
-      navigate(`/tenders/${tenderId}`, { state: { bidSuccess: true } });
+      nav(`/tenders/${id}`);
     } catch (err) {
       setError(err.response?.data?.error || "Failed to submit bid");
-    } finally {
-      setSubmitting(false);
     }
-  };
+    setLoading(false);
+  }
 
   return (
-    <div className="max-w-2xl mx-auto">
-      <div className="bg-white rounded-2xl shadow-elevated p-8 animate-fade-up">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-12 h-12 rounded-xl bg-teal-50 flex items-center justify-center">
-            <Gavel size={22} className="text-teal-600" />
-          </div>
-          <div>
-            <h2 className="font-heading font-bold text-xl text-gray-800">Submit Your Bid</h2>
-            <p className="text-sm text-gray-500">Submit a competitive and fair bid</p>
-          </div>
-        </div>
+    <div className="p-6 max-w-2xl">
+      <h1 className="text-2xl font-bold text-gray-800 mb-1">Submit Bid</h1>
+      {tender && <p className="text-gray-500 text-sm mb-6">{tender.title}</p>}
 
-        {error && (
-          <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg">{error}</div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div>
-            <label className="flex items-center gap-2 text-sm font-medium text-gray-600 mb-1">
-              <IndianRupee size={14} /> Bid Amount (₹)
-            </label>
-            <input
-              type="number"
-              required
-              min="1"
-              step="0.01"
-              value={form.amount}
-              onChange={(e) => setForm({ ...form, amount: e.target.value })}
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-300 focus:border-teal-400 outline-none"
-              placeholder="Enter your bid amount"
-            />
-          </div>
-
-          <div>
-            <label className="flex items-center gap-2 text-sm font-medium text-gray-600 mb-1">
-              <Clock size={14} /> Estimated Timeline (days)
-            </label>
-            <input
-              type="number"
-              min="1"
-              value={form.timeline_days}
-              onChange={(e) => setForm({ ...form, timeline_days: e.target.value })}
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-300 focus:border-teal-400 outline-none"
-              placeholder="Number of days to complete"
-            />
-          </div>
-
-          <div>
-            <label className="flex items-center gap-2 text-sm font-medium text-gray-600 mb-1">
-              <FileText size={14} /> Proposal
-            </label>
-            <textarea
-              rows={5}
-              value={form.proposal}
-              onChange={(e) => setForm({ ...form, proposal: e.target.value })}
-              className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-300 focus:border-teal-400 outline-none resize-none"
-              placeholder="Describe your approach, methodology, and relevant experience..."
-            />
-          </div>
-
-          <div className="bg-amber-50 p-3 rounded-lg text-xs text-amber-700 flex items-start gap-2">
-            <span className="text-amber-500 mt-0.5">⚠</span>
-            <span>
-              Your bid is final and cannot be modified. AI will score your bid based on price, reputation, and timeline.
-              Submitting a manipulated bid may result in blacklisting.
-            </span>
-          </div>
-
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() => navigate(-1)}
-              className="flex-1 py-2.5 border border-gray-200 text-gray-600 font-medium rounded-lg hover:bg-gray-50 transition"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="flex-1 py-2.5 bg-teal-500 text-white font-semibold rounded-lg hover:bg-teal-600 transition disabled:opacity-50"
-            >
-              {submitting ? "Submitting..." : "Submit Bid"}
-            </button>
-          </div>
-        </form>
+      <div className="bg-amber-50 border border-amber-200 text-amber-700 p-3 rounded-lg text-sm mb-6">
+        The bid closest to the hidden budget wins. Price your bid competitively based on fair cost estimation.
       </div>
+
+      {error && <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg mb-4">{error}</div>}
+
+      <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-sm border p-6 space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Bid Amount (₹)</label>
+          <input type="number" className="w-full border rounded-lg px-4 py-2.5 text-sm" placeholder="Enter your bid amount" value={form.amount} onChange={set("amount")} required />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Timeline (days)</label>
+          <input type="number" className="w-full border rounded-lg px-4 py-2.5 text-sm" placeholder="Estimated completion days" value={form.timeline_days} onChange={set("timeline_days")} required />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Proposal</label>
+          <textarea className="w-full border rounded-lg px-4 py-2.5 text-sm" rows={5} placeholder="Describe your approach, experience, and value..." value={form.proposal} onChange={set("proposal")} required />
+        </div>
+        <button type="submit" disabled={loading} className="w-full bg-teal-600 text-white py-2.5 rounded-lg font-medium hover:bg-teal-700 transition disabled:opacity-50">
+          {loading ? "Submitting..." : "Submit Bid"}
+        </button>
+      </form>
     </div>
   );
 }

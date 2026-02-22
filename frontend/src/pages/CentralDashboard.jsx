@@ -1,67 +1,154 @@
 import { useState, useEffect } from "react";
 import api from "../api/client";
-import { Building2, FileText, Gavel, AlertTriangle, TrendingUp, IndianRupee } from "lucide-react";
+import { toast } from "react-toastify";
+import AnalyticsCharts from "../components/AnalyticsCharts";
 
 export default function CentralDashboard() {
   const [stats, setStats] = useState(null);
-  const [recentLogs, setRecentLogs] = useState([]);
+  const [tab, setTab] = useState("overview");
+  const [states, setStates] = useState([]);
+  const [memberForm, setMemberForm] = useState({ name: "", email: "", password: "", state_id: "", type: "state" });
+  const [msg, setMsg] = useState("");
 
   useEffect(() => {
-    Promise.all([
-      api.get("/public/stats"),
-      api.get("/public/ledger?limit=10"),
-    ]).then(([statsRes, logsRes]) => {
-      setStats(statsRes.data);
-      setRecentLogs(logsRes.data.entries);
-    });
+    fetchDashData();
+    // Poll every 30 seconds for real-time updates
+    const interval = setInterval(fetchDashData, 30000);
+    return () => clearInterval(interval);
   }, []);
 
-  const cards = stats ? [
-    { label: "Total Tenders",    value: stats.totalTenders,      icon: FileText,       color: "bg-blue-50 text-blue-600" },
-    { label: "Open Tenders",     value: stats.openTenders,       icon: TrendingUp,     color: "bg-emerald-50 text-emerald-600" },
-    { label: "Active Contracts", value: stats.totalContracts,    icon: Gavel,          color: "bg-amber-50 text-amber-600" },
-    { label: "Completed",        value: stats.completedContracts,icon: Building2,      color: "bg-teal-50 text-teal-600" },
-    { label: "Complaints",       value: stats.totalComplaints,   icon: AlertTriangle,  color: "bg-red-50 text-red-600" },
-  ] : [];
+  function fetchDashData() {
+    api.get("/public/stats").then(r => setStats(r.data.stats)).catch(() => {});
+    api.get("/states").then(r => setStates(r.data.states || [])).catch(() => {});
+  }
+
+  const set = (k) => (e) => setMemberForm(p => ({ ...p, [k]: e.target.value }));
+
+  async function createMember(e) {
+    e.preventDefault();
+    setMsg("");
+    try {
+      if (memberForm.type === "state") {
+        await api.post("/auth/create-state-member", {
+          name: memberForm.name, email: memberForm.email,
+          password: memberForm.password, state_id: memberForm.state_id,
+        });
+      } else {
+        await api.post("/auth/create-ngo", {
+          name: memberForm.name, email: memberForm.email,
+          password: memberForm.password,
+        });
+      }
+      toast.success("Member created successfully!");
+      setMemberForm({ name: "", email: "", password: "", state_id: "", type: memberForm.type });
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Failed to create member");
+    }
+  }
+
+  const tabs = [
+    { key: "overview", label: "Overview" },
+    { key: "analytics", label: "Analytics" },
+    { key: "create", label: "Create Member" },
+  ];
 
   return (
-    <div className="space-y-6">
+    <div className="p-6 space-y-6">
       <div>
-        <h2 className="font-heading font-bold text-2xl text-gray-800">Central Government Dashboard</h2>
-        <p className="text-sm text-gray-500 mt-1">National overview of all public tenders and contracts</p>
+        <h1 className="text-2xl font-bold text-gray-800">Central Government Dashboard</h1>
+        <p className="text-gray-500 text-sm mt-1">National oversight of all tenders and activities</p>
       </div>
 
-      {/* Stat Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        {cards.map((card, i) => (
-          <div key={card.label} className={`bg-white rounded-xl shadow-card p-5 animate-fade-up`} style={{ animationDelay: `${i * 0.05}s` }}>
-            <div className={`w-10 h-10 rounded-lg ${card.color} flex items-center justify-center mb-3`}>
-              <card.icon size={18} />
-            </div>
-            <p className="text-2xl font-heading font-bold text-gray-800">{card.value}</p>
-            <p className="text-xs text-gray-500 mt-1">{card.label}</p>
-          </div>
+      <div className="flex gap-2">
+        {tabs.map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)} className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === t.key ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600"}`}>
+            {t.label}
+          </button>
         ))}
       </div>
 
-      {/* Recent Audit Activity */}
-      <div className="bg-white rounded-xl shadow-card p-6 animate-fade-up-delay-2">
-        <h3 className="font-heading font-semibold text-lg text-gray-800 mb-4">Recent Activity</h3>
-        <div className="space-y-2">
-          {recentLogs.map((log) => (
-            <div key={log.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-              <div className="flex items-center gap-3">
-                <div className="w-2 h-2 rounded-full bg-teal-400" />
-                <span className="text-sm font-medium text-gray-700">{log.action}</span>
-                <span className="text-xs text-gray-400 capitalize">{log.actor_role?.replace("_", " ")}</span>
+      {tab === "overview" && (
+        <div className="space-y-6">
+          {/* Stats cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              { label: "Total Tenders", value: stats?.tenders || 0, color: "bg-blue-50 text-blue-700" },
+              { label: "Active Contracts", value: stats?.contracts || 0, color: "bg-green-50 text-green-700" },
+              { label: "Complaints", value: stats?.complaints || 0, color: "bg-red-50 text-red-700" },
+              { label: "Registered Users", value: stats?.users || 0, color: "bg-amber-50 text-amber-700" },
+            ].map((s) => (
+              <div key={s.label} className={`${s.color} rounded-xl p-5`}>
+                <p className="text-xs font-medium opacity-70">{s.label}</p>
+                <p className="text-2xl font-bold mt-1">{s.value}</p>
               </div>
-              <span className="text-xs text-gray-400">
-                {new Date(log.createdAt).toLocaleString("en-IN")}
-              </span>
-            </div>
-          ))}
+            ))}
+          </div>
+
+          {/* Quick links */}
+          <div className="grid md:grid-cols-3 gap-4">
+            <a href="/complaints" className="bg-white rounded-xl shadow-sm border p-5 hover:shadow-md transition group">
+              <p className="font-semibold text-gray-800 group-hover:text-teal-600">Manage Complaints</p>
+              <p className="text-sm text-gray-500 mt-1">Assign NGOs and track investigations</p>
+            </a>
+            <a href="/cases" className="bg-white rounded-xl shadow-sm border p-5 hover:shadow-md transition group">
+              <p className="font-semibold text-gray-800 group-hover:text-teal-600">Case Management</p>
+              <p className="text-sm text-gray-500 mt-1">Track and manage formal cases</p>
+            </a>
+            <a href="/funding" className="bg-white rounded-xl shadow-sm border p-5 hover:shadow-md transition group">
+              <p className="font-semibold text-gray-800 group-hover:text-teal-600">Fund Requests</p>
+              <p className="text-sm text-gray-500 mt-1">Approve or reject state funding requests</p>
+            </a>
+            <a href="/blacklist" className="bg-white rounded-xl shadow-sm border p-5 hover:shadow-md transition group">
+              <p className="font-semibold text-gray-800 group-hover:text-teal-600">Blacklist Management</p>
+              <p className="text-sm text-gray-500 mt-1">Review blacklist requests and manage users</p>
+            </a>
+            <a href="/ledger" className="bg-white rounded-xl shadow-sm border p-5 hover:shadow-md transition group">
+              <p className="font-semibold text-gray-800 group-hover:text-teal-600">Public Ledger</p>
+              <p className="text-sm text-gray-500 mt-1">Verify the chain-hashed audit trail</p>
+            </a>
+          </div>
         </div>
-      </div>
+      )}
+
+      {tab === "analytics" && (
+        <AnalyticsCharts />
+      )}
+
+      {tab === "create" && (
+        <div className="max-w-lg">
+          <div className="bg-white rounded-xl shadow-sm border p-6">
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">Create New Member</h2>
+
+            <div className="flex gap-2 mb-4">
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" name="mtype" value="state" checked={memberForm.type === "state"} onChange={set("type")} className="accent-teal-600" />
+                <span className="text-sm">State Officer</span>
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" name="mtype" value="ngo" checked={memberForm.type === "ngo"} onChange={set("type")} className="accent-teal-600" />
+                <span className="text-sm">NGO Member</span>
+              </label>
+            </div>
+
+            {msg && <div className={`text-sm p-3 rounded-lg mb-4 ${msg.includes("success") ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600"}`}>{msg}</div>}
+
+            <form onSubmit={createMember} className="space-y-3">
+              <input className="w-full border rounded-lg px-4 py-2.5 text-sm" placeholder="Full Name" value={memberForm.name} onChange={set("name")} required />
+              <input type="email" className="w-full border rounded-lg px-4 py-2.5 text-sm" placeholder="Email" value={memberForm.email} onChange={set("email")} required />
+              <input type="password" className="w-full border rounded-lg px-4 py-2.5 text-sm" placeholder="Password" value={memberForm.password} onChange={set("password")} required />
+              {memberForm.type === "state" && (
+                <select className="w-full border rounded-lg px-4 py-2.5 text-sm" value={memberForm.state_id} onChange={set("state_id")} required>
+                  <option value="">Select State</option>
+                  {states.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              )}
+              <button type="submit" className="w-full bg-teal-600 text-white py-2.5 rounded-lg font-medium hover:bg-teal-700 transition">
+                Create {memberForm.type === "state" ? "State Officer" : "NGO Member"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

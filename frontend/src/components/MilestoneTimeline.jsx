@@ -1,48 +1,31 @@
-import { CheckCircle, Clock, AlertCircle, Circle } from "lucide-react";
+import { Circle, CircleDot, CheckCircle2, Clock } from "lucide-react";
 
-const statusConfig = {
-  pending:       { icon: Circle,      color: "text-gray-400",  bg: "bg-gray-100" },
-  proof_uploaded:{ icon: Clock,       color: "text-amber-500", bg: "bg-amber-50" },
-  under_review:  { icon: Clock,       color: "text-blue-500",  bg: "bg-blue-50" },
-  approved:      { icon: CheckCircle, color: "text-green-500", bg: "bg-green-50" },
-  rejected:      { icon: AlertCircle, color: "text-red-500",   bg: "bg-red-50" },
+const StatusIcon = ({ status }) => {
+  switch (status) {
+    case "in_progress": return <Clock size={18} className="text-amber-500" />;
+    case "completed": return <CircleDot size={18} className="text-blue-500" />;
+    case "verified": return <CheckCircle2 size={18} className="text-green-600" />;
+    default: return <Circle size={18} className="text-gray-400" />;
+  }
 };
 
 export default function MilestoneTimeline({ milestones = [] }) {
   return (
     <div className="space-y-0">
-      {milestones.map((ms, index) => {
-        const cfg = statusConfig[ms.status] || statusConfig.pending;
-        const Icon = cfg.icon;
-        const isLast = index === milestones.length - 1;
-
-        return (
-          <div key={ms.id} className="flex gap-4">
-            {/* Vertical line + icon */}
-            <div className="flex flex-col items-center">
-              <div className={`w-8 h-8 rounded-full ${cfg.bg} flex items-center justify-center`}>
-                <Icon size={16} className={cfg.color} />
-              </div>
-              {!isLast && <div className="w-0.5 flex-1 bg-gray-200 my-1" />}
-            </div>
-
-            {/* Content */}
-            <div className={`pb-6 flex-1 ${isLast ? "" : ""}`}>
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-gray-700">{ms.title}</h4>
-                <span className={`text-xs px-2 py-0.5 rounded-full badge-${ms.status}`}>
-                  {ms.status.replace("_", " ")}
-                </span>
-              </div>
-              <p className="text-xs text-gray-500 mt-1">{ms.description}</p>
-              <div className="flex items-center gap-4 mt-2 text-xs text-gray-400">
-                <span>₹{Number(ms.amount).toLocaleString("en-IN")}</span>
-                {ms.due_date && <span>Due: {new Date(ms.due_date).toLocaleDateString("en-IN")}</span>}
-              </div>
-            </div>
+      {milestones.map((m, i) => (
+        <div key={m.id} className="flex gap-3 items-start">
+          <div className="flex flex-col items-center">
+            <StatusIcon status={m.status} />
+            {i < milestones.length - 1 && <div className="w-px h-8 bg-gray-200" />}
           </div>
-        );
-      })}
+          <div className="pb-4">
+            <p className="text-sm font-medium text-gray-700">{m.title}</p>
+            {m.description && <p className="text-xs text-gray-400">{m.description}</p>}
+            <p className="text-xs text-gray-300 mt-0.5 capitalize">{m.status?.replace("_", " ")}</p>
+          </div>
+        </div>
+      ))}
+      {milestones.length === 0 && <p className="text-sm text-gray-400">No milestones yet.</p>}
     </div>
   );
 }

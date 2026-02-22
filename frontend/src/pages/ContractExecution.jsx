@@ -2,308 +2,268 @@ import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import api from "../api/client";
-import MilestoneTimeline from "../components/MilestoneTimeline";
-import WorkProofUpload from "../components/WorkProofUpload";
-import {
-  Upload, CheckCircle, XCircle, AlertTriangle, Clock, IndianRupee,
-  FileText, Image, Loader2, TrendingUp, Eye
-} from "lucide-react";
+import { CheckCircle, Clock, Upload, FileText, ChevronDown, ChevronUp, Loader2, Lock, AlertCircle } from "lucide-react";
 
 export default function ContractExecution() {
   const { id } = useParams();
   const { user } = useAuth();
   const [contract, setContract] = useState(null);
-  const [workProofs, setWorkProofs] = useState([]);
+  const [proofs, setProofs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [expandedPhase, setExpandedPhase] = useState(null);
+  const [phaseDesc, setPhaseDesc] = useState("");
+  const [phaseFiles, setPhaseFiles] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
 
-  const loadContract = () => {
-    Promise.all([
-      api.get(`/contracts/${id}`),
-      api.get(`/work-proofs/contract/${id}`).catch(() => ({ data: [] })),
-    ]).then(([contractRes, proofsRes]) => {
-      setContract(contractRes.data);
-      setWorkProofs(proofsRes.data);
-      setLoading(false);
-    }).catch(() => setLoading(false));
-  };
+  useEffect(() => { fetchContract(); }, [id]);
 
-  useEffect(() => { loadContract(); }, [id]);
-
-  const handleApprove = async (milestoneId) => {
+  async function fetchContract() {
     try {
-      await api.patch(`/milestones/${milestoneId}/approve`, { review_notes: "Approved after review" });
-      loadContract();
-    } catch (err) {
-      alert(err.response?.data?.error || "Approval failed");
-    }
-  };
+      const { data } = await api.get(`/contracts/${id}`);
+      setContract(data.contract);
+      const wp = await api.get(`/work-proofs/contract/${id}`);
+      setProofs(wp.data.proofs || []);
+    } catch {}
+    setLoading(false);
+  }
 
-  const handleReject = async (milestoneId) => {
+  async function submitPhaseProof(milestone) {
+    if (!phaseDesc.trim()) return alert("Please describe the work completed");
+    setSubmitting(true);
     try {
-      await api.patch(`/milestones/${milestoneId}/reject`, { review_notes: "Re-upload required" });
-      loadContract();
+      const tranches = contract?.ContractTranches?.sort((a, b) => a.sequence - b.sequence) || [];
+      const matchingTranche = tranches.find(t => t.sequence === milestone.sequence && t.status === "pending")
+        || tranches.find(t => t.status === "pending");
+
+      const totalMilestones = contract?.Milestones?.length || 1;
+      const pct = Math.round((milestone.sequence / totalMilestones) * 100);
+
+      const fd = new FormData();
+      fd.append("contract_id", id);
+      if (matchingTranche) fd.append("tranche_id", matchingTranche.id);
+      fd.append("milestone_id", milestone.id);
+      fd.append("description", phaseDesc);
+      fd.append("work_percentage", pct);
+      fd.append("amount_requested", Number(milestone.amount));
+      phaseFiles.forEach(f => fd.append("photos", f));
+
+      await api.post("/work-proofs", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setExpandedPhase(null);
+      setPhaseDesc("");
+      setPhaseFiles([]);
+      fetchContract();
     } catch (err) {
-      alert(err.response?.data?.error || "Rejection failed");
+      alert(err.response?.data?.error || "Failed to submit proof");
     }
-  };
+    setSubmitting(false);
+  }
 
-  if (loading) return <div className="h-64 bg-white rounded-xl animate-pulse" />;
-  if (!contract) return <div className="text-center text-gray-400 py-12">Contract not found</div>;
+  if (loading) return <div className="p-8 text-gray-500">Loading contract...</div>;
+  if (!contract) return <div className="p-8 text-red-500">Contract not found</div>;
 
-  const milestones = contract.Milestones || [];
-  const isContractor = user?.role === "contractor";
-  const isGov = user?.role === "state_gov" || user?.role === "central_gov";
-  const isVerifier = user?.role === "auditor_ngo" || user?.role === "community";
-
-  const totalAmount = parseFloat(contract.total_amount);
-  const escrowBalance = parseFloat(contract.escrow_balance);
-  const disbursed = totalAmount - escrowBalance;
-  const progress = totalAmount > 0 ? Math.round((disbursed / totalAmount) * 100) : 0;
-  const initialPayment = Math.round(totalAmount * 0.20 * 100) / 100;
+  const isContractor = user?.role === "contractor" && contract.contractor_id === user?.id;
+  const disbursed = contract.ContractTranches?.filter(t => t.status === "disbursed").reduce((s, t) => s + Number(t.amount), 0) || 0;
+  const milestones = (contract.Milestones || []).sort((a, b) => a.sequence - b.sequence);
+  const totalPhases = milestones.length || 1;
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Contract info */}
-      <div className="bg-white rounded-xl shadow-card p-6 animate-fade-up">
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <h2 className="font-heading font-bold text-xl text-gray-800">
-              {contract.Tender?.title || "Contract"}
-            </h2>
-            <p className="text-sm text-gray-500 mt-1">
-              Contractor: {contract.contractor?.name} · Rep: {contract.contractor?.reputation || 0}
-            </p>
-          </div>
-          <span className={`text-xs px-3 py-1 rounded-full font-medium badge-${contract.status}`}>
-            {contract.status}
-          </span>
-        </div>
-
-        {/* Financial overview */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-          <div className="p-3 bg-green-50 rounded-xl">
-            <p className="text-xs text-green-600 font-medium flex items-center gap-1"><IndianRupee size={10} /> Total</p>
-            <p className="text-lg font-heading font-bold text-green-700">₹{totalAmount.toLocaleString("en-IN")}</p>
-          </div>
-          <div className="p-3 bg-blue-50 rounded-xl">
-            <p className="text-xs text-blue-600 font-medium flex items-center gap-1"><TrendingUp size={10} /> 20% Advance</p>
-            <p className="text-lg font-heading font-bold text-blue-700">₹{initialPayment.toLocaleString("en-IN")}</p>
-          </div>
-          <div className="p-3 bg-amber-50 rounded-xl">
-            <p className="text-xs text-amber-600 font-medium flex items-center gap-1"><Clock size={10} /> Escrow</p>
-            <p className="text-lg font-heading font-bold text-amber-700">₹{escrowBalance.toLocaleString("en-IN")}</p>
-          </div>
-          <div className="p-3 bg-teal-50 rounded-xl">
-            <p className="text-xs text-teal-600 font-medium flex items-center gap-1"><CheckCircle size={10} /> Disbursed</p>
-            <p className="text-lg font-heading font-bold text-teal-700">₹{disbursed.toLocaleString("en-IN")}</p>
-          </div>
-        </div>
-
-        {/* Progress bar */}
-        <div className="w-full bg-gray-100 rounded-full h-3">
-          <div
-            className="h-3 rounded-full bg-gradient-to-r from-teal-400 to-green-500 transition-all duration-700"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-        <p className="text-xs text-gray-400 mt-1.5">{progress}% of total funds disbursed</p>
+    <div className="p-6 space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-800">{contract.Tender?.title || "Contract Details"}</h1>
+        <p className="text-gray-500 text-sm mt-1">Contract #{id.slice(0, 8)}</p>
       </div>
 
-      {/* Contractor: Upload work proof */}
-      {isContractor && contract.status === "active" && (
-        <WorkProofUpload
-          contract={contract}
-          milestones={milestones}
-          onSuccess={loadContract}
-        />
-      )}
-
-      {/* Work Proofs History */}
-      {workProofs.length > 0 && (
-        <div className="bg-white rounded-xl shadow-card p-6 animate-fade-up-delay">
-          <h3 className="font-heading font-semibold text-lg text-gray-800 mb-4 flex items-center gap-2">
-            <FileText size={18} className="text-blue-500" />
-            Work Proof Submissions ({workProofs.length})
-          </h3>
-          <div className="space-y-4">
-            {workProofs.map(proof => (
-              <WorkProofCard
-                key={proof.id}
-                proof={proof}
-                isGov={isGov}
-                isVerifier={isVerifier}
-                onRefresh={loadContract}
-              />
-            ))}
-          </div>
+      {/* Financial overview */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-blue-50 text-blue-700 rounded-xl p-4">
+          <p className="text-xs opacity-70">Total Amount</p>
+          <p className="text-xl font-bold mt-1">₹{(contract.total_amount / 100000).toFixed(1)}L</p>
         </div>
-      )}
+        <div className="bg-green-50 text-green-700 rounded-xl p-4">
+          <p className="text-xs opacity-70">Disbursed</p>
+          <p className="text-xl font-bold mt-1">₹{(disbursed / 100000).toFixed(1)}L</p>
+        </div>
+        <div className="bg-amber-50 text-amber-700 rounded-xl p-4">
+          <p className="text-xs opacity-70">Escrow Balance</p>
+          <p className="text-xl font-bold mt-1">₹{(contract.escrow_balance / 100000).toFixed(1)}L</p>
+        </div>
+        <div className="bg-purple-50 text-purple-700 rounded-xl p-4">
+          <p className="text-xs opacity-70">Tranche Progress</p>
+          <p className="text-xl font-bold mt-1">{contract.current_tranche}/{contract.tranche_count}</p>
+        </div>
+      </div>
 
-      {/* Milestones with actions */}
-      <div className="bg-white rounded-xl shadow-card p-6 animate-fade-up-delay">
-        <h3 className="font-heading font-semibold text-lg text-gray-800 mb-4">Milestones</h3>
-        <div className="space-y-4">
-          {milestones.map((ms) => (
-            <div key={ms.id} className="border border-gray-100 rounded-xl p-4">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="font-semibold text-gray-700">{ms.sequence}. {ms.title}</h4>
-                <span className={`text-xs px-2.5 py-0.5 rounded-full badge-${ms.status}`}>
-                  {ms.status.replace("_", " ")}
-                </span>
+      {/* Progress bar */}
+      <div>
+        <div className="flex justify-between text-sm text-gray-500 mb-1">
+          <span>Contract Progress</span>
+          <span>{Math.round((contract.current_tranche / contract.tranche_count) * 100)}%</span>
+        </div>
+        <div className="w-full bg-gray-200 rounded-full h-3">
+          <div className="bg-teal-500 h-3 rounded-full transition-all" style={{ width: `${(contract.current_tranche / contract.tranche_count) * 100}%` }} />
+        </div>
+      </div>
+
+      {/* Tranches */}
+      <div>
+        <h2 className="text-lg font-semibold text-gray-800 mb-3">Tranches</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {contract.ContractTranches?.sort((a, b) => a.sequence - b.sequence).map(t => (
+            <div key={t.id} className={`rounded-xl p-4 ${t.status === "disbursed" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+              <p className="text-xs font-medium opacity-70">Tranche {t.sequence}</p>
+              <p className="text-lg font-bold mt-1">₹{(t.amount / 100000).toFixed(1)}L</p>
+              <p className="text-xs mt-1 capitalize">{t.status}</p>
+              {t.disbursed_at && <p className="text-xs opacity-60 mt-0.5">{new Date(t.disbursed_at).toLocaleDateString()}</p>}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ═══════════ Phase Tiles ═══════════ */}
+      <div>
+        <h2 className="text-lg font-semibold text-gray-800 mb-1">Project Phases</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          {isContractor
+            ? "Click on the active phase to submit your work proof"
+            : "Track milestone completion progress"}
+        </p>
+
+        <div className="space-y-3">
+          {milestones.map((m, idx) => {
+            const phaseProofs = proofs.filter(p => p.milestone_id === m.id);
+            const isActive = m.status === "in_progress";
+            const isActionable = isContractor && isActive && contract.status === "active";
+            const isExpanded = expandedPhase === m.id;
+            const cumulativePct = Math.round((m.sequence / totalPhases) * 100);
+
+            // Status config
+            const statusCfg = {
+              approved:       { bg: "bg-green-50 border-green-200", badge: "bg-green-100 text-green-700", icon: <CheckCircle size={20} className="text-green-500" />, label: "Completed" },
+              in_progress:    { bg: "bg-blue-50 border-blue-300 ring-2 ring-blue-200", badge: "bg-blue-100 text-blue-700", icon: <Clock size={20} className="text-blue-500 animate-pulse" />, label: "In Progress" },
+              proof_uploaded: { bg: "bg-amber-50 border-amber-200", badge: "bg-amber-100 text-amber-700", icon: <Upload size={20} className="text-amber-500" />, label: "Proof Submitted" },
+              under_review:   { bg: "bg-purple-50 border-purple-200", badge: "bg-purple-100 text-purple-700", icon: <FileText size={20} className="text-purple-500" />, label: "Under Review" },
+              rejected:       { bg: "bg-red-50 border-red-200", badge: "bg-red-100 text-red-700", icon: <AlertCircle size={20} className="text-red-500" />, label: "Rejected" },
+              pending:        { bg: "bg-gray-50 border-gray-200 opacity-60", badge: "bg-gray-100 text-gray-500", icon: <Lock size={14} className="text-gray-400" />, label: "Locked" },
+            };
+            const cfg = statusCfg[m.status] || statusCfg.pending;
+
+            return (
+              <div key={m.id} className={`rounded-xl border-2 transition-all ${cfg.bg} ${isActionable ? "cursor-pointer hover:shadow-md" : ""}`}>
+                {/* Card header — always visible */}
+                <div
+                  className="p-4 flex items-center gap-4"
+                  onClick={() => {
+                    if (isActionable) setExpandedPhase(isExpanded ? null : m.id);
+                  }}
+                >
+                  {/* Phase number badge */}
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0
+                    ${m.status === "approved" ? "bg-green-200 text-green-800"
+                      : isActive ? "bg-blue-200 text-blue-800"
+                      : "bg-gray-200 text-gray-500"}`}>
+                    {m.sequence}
+                  </div>
+
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-semibold text-gray-800 text-sm">{m.title || `Phase ${m.sequence}`}</p>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ${cfg.badge}`}>
+                        {cfg.label}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-4 mt-1 text-xs text-gray-500">
+                      <span>₹{(m.amount / 100000).toFixed(1)}L</span>
+                      <span>Cumulative: {cumulativePct}%</span>
+                      {m.description && <span className="truncate">{m.description}</span>}
+                    </div>
+                  </div>
+
+                  {/* Status icon + expand arrow */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {cfg.icon}
+                    {isActionable && (
+                      isExpanded ? <ChevronUp size={18} className="text-blue-400" /> : <ChevronDown size={18} className="text-blue-400" />
+                    )}
+                  </div>
+                </div>
+
+                {/* Existing proofs for this phase */}
+                {phaseProofs.length > 0 && (
+                  <div className="px-4 pb-2">
+                    {phaseProofs.map(wp => (
+                      <div key={wp.id} className="flex items-center justify-between bg-white/70 border rounded-lg px-3 py-2 mb-1">
+                        <div>
+                          <p className="text-xs font-medium text-gray-700">{wp.description}</p>
+                          <p className="text-[10px] text-gray-400">Votes: {wp.approval_count}/{wp.required_approvals} — {new Date(wp.createdAt).toLocaleDateString()}</p>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                          wp.status === "approved" ? "bg-green-100 text-green-700"
+                          : wp.status === "rejected" ? "bg-red-100 text-red-700"
+                          : "bg-blue-100 text-blue-700"
+                        }`}>{wp.status?.replace(/_/g, " ")}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Expandable proof submission form */}
+                {isExpanded && isActionable && (
+                  <div className="border-t-2 border-blue-200 p-4 space-y-3 bg-white/50 rounded-b-xl">
+                    <p className="text-xs font-semibold text-blue-600 uppercase tracking-wide">Submit Proof for Phase {m.sequence}</p>
+
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div className="bg-blue-50 rounded-lg p-2.5">
+                        <p className="text-gray-500">Tranche Amount</p>
+                        <p className="font-bold text-blue-700">₹{(m.amount / 100000).toFixed(1)}L</p>
+                      </div>
+                      <div className="bg-blue-50 rounded-lg p-2.5">
+                        <p className="text-gray-500">Work Completion</p>
+                        <p className="font-bold text-blue-700">{cumulativePct}%</p>
+                      </div>
+                    </div>
+
+                    <textarea
+                      className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none"
+                      rows={3}
+                      placeholder={`Describe the work completed in Phase ${m.sequence}...`}
+                      value={phaseDesc}
+                      onChange={e => setPhaseDesc(e.target.value)}
+                    />
+
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Upload Photos / Documents</label>
+                      <input
+                        type="file" multiple accept="image/*,.pdf,.zip"
+                        className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-blue-50 file:text-blue-600 file:px-3 file:py-1 file:text-xs"
+                        onChange={e => setPhaseFiles(Array.from(e.target.files))}
+                      />
+                      {phaseFiles.length > 0 && (
+                        <p className="text-xs text-gray-400 mt-1">{phaseFiles.length} file(s) selected</p>
+                      )}
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => submitPhaseProof(m)}
+                        disabled={submitting}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+                      >
+                        {submitting ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                        {submitting ? "Submitting..." : "Submit Phase Proof"}
+                      </button>
+                      <button
+                        onClick={() => { setExpandedPhase(null); setPhaseDesc(""); setPhaseFiles([]); }}
+                        className="px-4 py-2 bg-gray-100 text-gray-600 text-sm rounded-lg hover:bg-gray-200"
+                      >Cancel</button>
+                    </div>
+                  </div>
+                )}
               </div>
-              <p className="text-sm text-gray-500 mb-3">{ms.description}</p>
-              <p className="text-sm text-gray-600 mb-3">
-                Amount: ₹{Number(ms.amount).toLocaleString("en-IN")}
-              </p>
-
-              {/* Gov: approve / reject */}
-              {isGov && ms.status === "proof_uploaded" && (
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => handleApprove(ms.id)}
-                    className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white text-sm rounded-lg hover:bg-green-600 transition"
-                  >
-                    <CheckCircle size={14} /> Approve & Release
-                  </button>
-                  <button
-                    onClick={() => handleReject(ms.id)}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white text-sm rounded-lg hover:bg-red-600 transition"
-                  >
-                    <XCircle size={14} /> Reject
-                  </button>
-                </div>
-              )}
-
-              {/* Payment info */}
-              {ms.Payment && ms.Payment.status === "released" && (
-                <div className="mt-2 p-2 bg-green-50 rounded-lg text-xs text-green-600">
-                  ✓ Payment released: ₹{Number(ms.Payment.amount).toLocaleString("en-IN")} · TX: {ms.Payment.tx_hash}
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
-    </div>
-  );
-}
-
-/* ── Work proof card sub-component ── */
-function WorkProofCard({ proof, isGov, isVerifier, onRefresh }) {
-  const [reviewNotes, setReviewNotes] = useState("");
-  const [actionLoading, setActionLoading] = useState(false);
-
-  const statusColors = {
-    pending_review: { bg: "bg-orange-50", text: "text-orange-700", label: "Pending Review" },
-    approved: { bg: "bg-green-50", text: "text-green-700", label: "Approved" },
-    rejected: { bg: "bg-red-50", text: "text-red-700", label: "Rejected" },
-  };
-
-  const status = statusColors[proof.status] || statusColors.pending_review;
-
-  const handleApprove = async () => {
-    setActionLoading(true);
-    try {
-      await api.patch(`/work-proofs/${proof.id}/approve`, { review_notes: reviewNotes || "Approved" });
-      onRefresh?.();
-    } catch (err) {
-      alert(err.response?.data?.error || "Failed");
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleReject = async () => {
-    if (!reviewNotes.trim()) {
-      alert("Please provide a rejection reason");
-      return;
-    }
-    setActionLoading(true);
-    try {
-      await api.patch(`/work-proofs/${proof.id}/reject`, { review_notes: reviewNotes });
-      onRefresh?.();
-    } catch (err) {
-      alert(err.response?.data?.error || "Failed");
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  return (
-    <div className={`border rounded-xl p-4 ${status.bg}`}>
-      <div className="flex items-start justify-between mb-2">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${status.bg} ${status.text}`}>
-              {status.label}
-            </span>
-            <span className="text-xs text-gray-400">
-              {new Date(proof.createdAt).toLocaleDateString("en-IN")} at {new Date(proof.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
-            </span>
-          </div>
-          <p className="text-sm text-gray-700">{proof.description}</p>
-        </div>
-        <div className="text-right">
-          <p className="text-sm font-bold text-green-600">₹{Number(proof.amount_requested).toLocaleString("en-IN")}</p>
-          <p className="text-xs text-gray-400">{proof.work_percentage}% work</p>
-        </div>
-      </div>
-
-      {/* Photos */}
-      {proof.photo_urls?.length > 0 && (
-        <div className="flex gap-2 mt-3 flex-wrap">
-          {proof.photo_urls.map((photo, i) => (
-            <div key={i} className="w-16 h-16 rounded-lg overflow-hidden bg-gray-200 border border-gray-300">
-              <img src={photo.url} alt={`Proof ${i + 1}`} className="w-full h-full object-cover" onError={(e) => { e.target.style.display = "none"; }} />
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Warning count */}
-      {proof.warning_count > 0 && (
-        <div className="mt-2 flex items-center gap-1 text-xs text-red-600">
-          <AlertTriangle size={12} /> {proof.warning_count} warning(s) issued
-        </div>
-      )}
-
-      {/* Review notes */}
-      {proof.review_notes && proof.status !== "pending_review" && (
-        <div className="mt-2 p-2 bg-white rounded-lg text-xs text-gray-600">
-          <strong>Review:</strong> {proof.review_notes}
-        </div>
-      )}
-
-      {/* Actions for verifiers */}
-      {proof.status === "pending_review" && (isGov || isVerifier) && (
-        <div className="mt-3 pt-3 border-t border-gray-200/50 space-y-2">
-          <textarea
-            value={reviewNotes}
-            onChange={(e) => setReviewNotes(e.target.value)}
-            placeholder="Add review notes..."
-            rows={2}
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-blue-300 outline-none resize-none"
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={handleApprove}
-              disabled={actionLoading}
-              className="flex items-center gap-1.5 px-4 py-2 bg-green-500 text-white text-xs font-medium rounded-lg hover:bg-green-600 transition disabled:opacity-50"
-            >
-              {actionLoading ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle size={12} />}
-              Approve & Release ₹{Number(proof.amount_requested).toLocaleString("en-IN")}
-            </button>
-            <button
-              onClick={handleReject}
-              disabled={actionLoading}
-              className="flex items-center gap-1.5 px-4 py-2 bg-red-500 text-white text-xs font-medium rounded-lg hover:bg-red-600 transition disabled:opacity-50"
-            >
-              {actionLoading ? <Loader2 size={12} className="animate-spin" /> : <XCircle size={12} />}
-              Reject
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

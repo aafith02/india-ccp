@@ -1,113 +1,103 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 import api from "../api/client";
-import TenderCard from "../components/TenderCard";
-import ComplaintForm from "../components/ComplaintForm";
-import { Globe, Search, ClipboardCheck, ArrowRight } from "lucide-react";
 
 export default function CommunityPortal() {
+  const { user } = useAuth();
+  const [stateWorks, setStateWorks] = useState(null);
   const [tenders, setTenders] = useState([]);
-  const [states, setStates] = useState([]);
-  const [filters, setFilters] = useState({ state_id: "", status: "" });
-  const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState("works");
 
   useEffect(() => {
-    api.get("/states").then(({ data }) => setStates(data)).catch(() => {});
+    if (user?.state_id) {
+      api.get(`/public/state-works/${user.state_id}`).then(r => setStateWorks(r.data)).catch(() => {});
+    }
+    api.get("/public/tenders").then(r => setTenders(r.data.tenders || [])).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    setLoading(true);
-    const params = new URLSearchParams();
-    if (filters.state_id) params.set("state_id", filters.state_id);
-    if (filters.status) params.set("status", filters.status);
-    api.get(`/public/tenders?${params}`).then(({ data }) => {
-      setTenders(data);
-      setLoading(false);
-    }).catch(() => setLoading(false));
-  }, [filters]);
-
-  const filtered = tenders.filter(t =>
-    !search || t.title.toLowerCase().includes(search.toLowerCase()) || t.location?.toLowerCase().includes(search.toLowerCase())
-  );
-
   return (
-    <div className="max-w-5xl mx-auto space-y-6 py-6 px-4">
-      {/* Header */}
-      <div className="text-center animate-fade-up">
-        <div className="w-16 h-16 bg-teal-500 rounded-2xl mx-auto flex items-center justify-center mb-4">
-          <Globe size={28} className="text-white" />
-        </div>
-        <h1 className="font-heading font-bold text-3xl text-gray-800">Community Portal</h1>
-        <p className="text-gray-500 mt-2">Track public tenders, view transactions, and report issues</p>
+    <div className="p-6 space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-800">Community Portal</h1>
+        <p className="text-gray-500 text-sm mt-1">View projects in your state and report issues</p>
       </div>
 
-      {/* Verification CTA */}
-      <Link
-        to="/verify"
-        className="block bg-gradient-to-r from-teal-500 to-emerald-600 rounded-xl p-4 text-white shadow-md hover:shadow-lg transition animate-fade-up"
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center">
-              <ClipboardCheck size={22} className="text-white" />
-            </div>
-            <div>
-              <p className="font-semibold">Community Verification Center</p>
-              <p className="text-teal-100 text-sm">Help verify contractor work proofs &amp; ensure project quality</p>
-            </div>
-          </div>
-          <ArrowRight size={20} className="text-teal-100" />
-        </div>
-      </Link>
-
-      {/* Filters */}
-      <div className="bg-white rounded-xl shadow-card p-4 flex flex-wrap gap-3 animate-fade-up-delay">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search projects..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-300 outline-none"
-          />
-        </div>
-        <select
-          value={filters.state_id}
-          onChange={(e) => setFilters({ ...filters, state_id: e.target.value })}
-          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-300 outline-none"
-        >
-          <option value="">All States</option>
-          {states.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-        <select
-          value={filters.status}
-          onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-300 outline-none"
-        >
-          <option value="">All Status</option>
-          <option value="open">Open</option>
-          <option value="awarded">Awarded</option>
-          <option value="in_progress">In Progress</option>
-          <option value="completed">Completed</option>
-        </select>
+      <div className="grid md:grid-cols-3 gap-4">
+        <Link to="/report" className="bg-gradient-to-r from-red-500 to-red-600 text-white rounded-xl p-5 hover:shadow-lg transition">
+          <p className="font-semibold text-lg">Report an Issue</p>
+          <p className="text-red-100 text-sm mt-1">Spot fake work or corruption? Let us know.</p>
+        </Link>
+        <Link to="/ledger" className="bg-gradient-to-r from-teal-500 to-teal-600 text-white rounded-xl p-5 hover:shadow-lg transition">
+          <p className="font-semibold text-lg">Public Ledger</p>
+          <p className="text-teal-100 text-sm mt-1">Every action recorded on-chain. Verify transparency.</p>
+        </Link>
+        <Link to="/points" className="bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-xl p-5 hover:shadow-lg transition">
+          <p className="font-semibold text-lg">Leaderboard</p>
+          <p className="text-purple-100 text-sm mt-1">See top contractors and verifiers.</p>
+        </Link>
       </div>
 
-      {/* Tenders List */}
-      {loading ? (
-        <div className="space-y-3">
-          {[1, 2, 3].map(i => <div key={i} className="h-28 bg-white rounded-xl animate-pulse" />)}
+      <div className="flex gap-2">
+        <button onClick={() => setTab("works")} className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === "works" ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600"}`}>State Works</button>
+        <button onClick={() => setTab("tenders")} className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === "tenders" ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600"}`}>Public Tenders</button>
+      </div>
+
+      {tab === "works" && (
+        <div>
+          {!user?.state_id ? (
+            <p className="text-gray-400 text-sm">Select a state in your profile to see local works.</p>
+          ) : stateWorks?.projects?.length > 0 ? (
+            <div className="space-y-4">
+              {stateWorks.projects.map(t => (
+                <div key={t.id} className="bg-white rounded-xl shadow-sm border p-5">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h3 className="font-semibold text-gray-800">{t.title}</h3>
+                      <p className="text-sm text-gray-500">{t.location} — {t.category}</p>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${t.status === "in_progress" ? "bg-blue-100 text-blue-700" : t.status === "completed" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+                      {t.status}
+                    </span>
+                  </div>
+
+                  {t.Contract && (
+                    <div className="mt-3 bg-gray-50 rounded-lg p-3">
+                      <p className="text-sm text-gray-600">Contract: ₹{(t.Contract.total_amount / 100000).toFixed(1)}L — Tranche {t.Contract.current_tranche}/{t.Contract.tranche_count}</p>
+                      <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
+                        <div className="bg-teal-500 h-2 rounded-full" style={{ width: `${(t.Contract.current_tranche / t.Contract.tranche_count) * 100}%` }} />
+                      </div>
+
+                      {t.Contract.ContractTranches?.length > 0 && (
+                        <div className="mt-2 flex gap-1">
+                          {t.Contract.ContractTranches.map(tr => (
+                            <span key={tr.id} className={`px-2 py-0.5 rounded text-xs ${tr.status === "disbursed" ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-500"}`}>
+                              T{tr.sequence}: {tr.status}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-gray-400 text-sm">No active works found in your state.</p>
+          )}
         </div>
-      ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-xl shadow-card p-8 text-center text-gray-400">
-          No projects found matching your filters.
-        </div>
-      ) : (
+      )}
+
+      {tab === "tenders" && (
         <div className="space-y-3">
-          {filtered.map(tender => (
-            <TenderCard key={tender.id} tender={tender} />
+          {tenders.map(t => (
+            <div key={t.id} className="bg-white rounded-xl shadow-sm border p-4">
+              <h3 className="font-semibold text-gray-800">{t.title}</h3>
+              <p className="text-sm text-gray-500">{t.State?.name} — {t.location}</p>
+              <p className="text-xs text-gray-400 mt-1">{t.category} — {t.status}</p>
+            </div>
           ))}
+          {tenders.length === 0 && <p className="text-gray-400 text-sm">No tenders available</p>}
         </div>
       )}
     </div>

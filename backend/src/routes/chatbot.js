@@ -1,101 +1,38 @@
 const router = require("express").Router();
-const { Tender, Contract, Milestone, Payment, State } = require("../models");
-const { Op } = require("sequelize");
+const { authenticate } = require("../middleware/auth");
 
-/**
- * Simple fact-based chatbot endpoint.
- * Accepts a question, parses intent, returns project facts from DB.
- * No complaint filing, no write actions.
- */
-router.post("/ask", async (req, res) => {
-  try {
-    const { question } = req.body;
-    if (!question) return res.status(400).json({ error: "question required" });
+/*
+  Simple keyword-based chatbot – v2 keeps it minimal.
+  Future: plug in an LLM or Rasa NLU.
+*/
 
-    const q = question.toLowerCase();
+const FAQ = [
+  { keywords: ["tender", "create"], answer: "Only state_gov members can create tenders for their state." },
+  { keywords: ["bid", "submit"], answer: "Verified contractors can bid on tenders in their state. The bid closest to the hidden budget wins." },
+  { keywords: ["kyc", "verify"], answer: "After registering as a contractor, a state government member from your state will verify your KYC documents." },
+  { keywords: ["tranche", "payment"], answer: "Contract amounts are split into tranches. The first tranche is disbursed upfront. Subsequent tranches are released after work proof is verified." },
+  { keywords: ["work", "proof"], answer: "Contractors upload screenshots / documents as proof of work. Assigned state reviewers vote; 51% approval releases the next tranche." },
+  { keywords: ["complaint", "report"], answer: "Community members can report issues. Central gov assigns an NGO to investigate. If valid, the contractor and approving reviewers are penalized." },
+  { keywords: ["points", "reward"], answer: "Contractors earn points for completing projects and approved tranches. Reviewers earn points for voting. Penalties deduct points." },
+  { keywords: ["ngo", "investigate"], answer: "NGO members are assigned by central gov to investigate complaints. They submit findings as confirmed_valid or confirmed_fake." },
+  { keywords: ["ledger", "public", "blockchain"], answer: "All platform actions (except login details) are recorded in a tamper-evident chain-hashed audit ledger viewable by the public." },
+  { keywords: ["register", "signup"], answer: "Community members can register freely. Contractors need to provide KYC data (ID number, business name) and await state verification." },
+];
 
-    // ─── Intent: project / tender status ───
-    if (q.includes("status") || q.includes("project") || q.includes("tender")) {
-      const keyword = extractKeyword(question);
-      if (keyword) {
-        const tender = await Tender.findOne({
-          where: { title: { [Op.iLike]: `%${keyword}%` } },
-          attributes: { exclude: ["budget_hidden"] },
-          include: [
-            { model: State, attributes: ["name"] },
-            { model: Contract, include: [{ model: Milestone, attributes: ["title", "status", "amount"] }] },
-          ],
-        });
-        if (tender) {
-          return res.json({
-            answer: `Project "${tender.title}" in ${tender.State?.name || "unknown state"} is currently **${tender.status}**.`,
-            data: tender,
-          });
-        }
-        return res.json({ answer: `I couldn't find a project matching "${keyword}". Try the exact project name.` });
-      }
-    }
-
-    // ─── Intent: payment info ───
-    if (q.includes("payment") || q.includes("released") || q.includes("fund")) {
-      const keyword = extractKeyword(question);
-      if (keyword) {
-        const tender = await Tender.findOne({
-          where: { title: { [Op.iLike]: `%${keyword}%` } },
-          include: [{
-            model: Contract,
-            include: [{ model: Milestone, include: [Payment] }],
-          }],
-        });
-        if (tender?.Contract) {
-          const released = tender.Contract.Milestones
-            ?.filter(m => m.Payment?.status === "released")
-            .reduce((sum, m) => sum + parseFloat(m.Payment.amount), 0) || 0;
-          return res.json({
-            answer: `Total released for "${tender.title}": ₹${released.toLocaleString("en-IN")}`,
-            data: { total_released: released },
-          });
-        }
-      }
-    }
-
-    // ─── Intent: how to report ───
-    if (q.includes("report") || q.includes("complaint") || q.includes("issue")) {
-      return res.json({
-        answer: "To report an issue, please use the **Report an Issue** form on the Community Portal. You'll need to provide a description and optionally attach evidence.",
-      });
-    }
-
-    // ─── Intent: open tenders ───
-    if (q.includes("open") || q.includes("available") || q.includes("bid")) {
-      const openTenders = await Tender.findAll({
-        where: { status: "open" },
-        attributes: ["id", "title", "location", "bid_deadline"],
-        include: [{ model: State, attributes: ["name"] }],
-        limit: 10,
-        order: [["bid_deadline", "ASC"]],
-      });
-      return res.json({
-        answer: `There are ${openTenders.length} open tenders right now.`,
-        data: openTenders,
-      });
-    }
-
-    // ─── Fallback ───
-    return res.json({
-      answer: "I can help with project status, payment info, and open tenders. Try asking: \"What is the status of [project name]?\"",
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+function findAnswer(message) {
+  const lower = message.toLowerCase();
+  for (const faq of FAQ) {
+    if (faq.keywords.some((k) => lower.includes(k))) return faq.answer;
   }
-});
-
-/* Helper: extract the most likely keyword/project name from the question */
-function extractKeyword(text) {
-  // Remove common question words, return remaining noun phrase
-  const stopWords = ["what", "is", "the", "status", "of", "project", "tender", "payment", "for", "how", "much", "has", "been", "released", "tell", "me", "about", "show", "find", "latest", "last", "recent"];
-  const words = text.replace(/[?.,!]/g, "").split(/\s+/).filter(w => !stopWords.includes(w.toLowerCase()));
-  return words.join(" ").trim() || null;
+  return "I'm not sure about that. Please contact support or check the public ledger for transparency information.";
 }
+
+/* POST / — ask a question */
+router.post("/", authenticate, async (req, res) => {
+  const { message } = req.body;
+  if (!message) return res.status(400).json({ error: "Message required" });
+  const reply = findAnswer(message);
+  res.json({ reply });
+});
 
 module.exports = router;

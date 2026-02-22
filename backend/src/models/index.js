@@ -1,6 +1,10 @@
 const { DataTypes } = require("sequelize");
 const sequelize = require("../config/db");
 
+/* ═══════════════════════════════════════════════════════════════════════
+   MODELS — TenderGuard v2
+   ═══════════════════════════════════════════════════════════════════════ */
+
 /* ───────── STATES ───────── */
 const State = sequelize.define("State", {
   id:        { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
@@ -9,8 +13,11 @@ const State = sequelize.define("State", {
   logo_url:  { type: DataTypes.TEXT },
   map_url:   { type: DataTypes.TEXT },
   theme:     { type: DataTypes.JSONB, defaultValue: { primary: "#0d9488", secondary: "#d4a76a", bg: "#faf7f2" } },
-  symbol:    { type: DataTypes.JSONB, defaultValue: {} },       // { animal, bird, flower, tree, emoji }
-  languages: { type: DataTypes.JSONB, defaultValue: ["en"] },   // [{ code, name, native, default }]
+  symbol:    { type: DataTypes.JSONB, defaultValue: {} },
+  languages: { type: DataTypes.JSONB, defaultValue: ["en"] },
+  balance:   { type: DataTypes.DECIMAL(15, 2), defaultValue: 0 },
+  total_received: { type: DataTypes.DECIMAL(15, 2), defaultValue: 0 },
+  total_allocated: { type: DataTypes.DECIMAL(15, 2), defaultValue: 0 },
 }, { tableName: "states", timestamps: true });
 
 /* ───────── USERS ───────── */
@@ -19,11 +26,24 @@ const User = sequelize.define("User", {
   name:          { type: DataTypes.STRING, allowNull: false },
   email:         { type: DataTypes.STRING, allowNull: false, unique: true },
   password_hash: { type: DataTypes.STRING, allowNull: false },
-  role:          { type: DataTypes.ENUM("central_gov", "state_gov", "contractor", "community", "auditor_ngo"), allowNull: false },
-  kyc_status:    { type: DataTypes.ENUM("pending", "verified", "rejected"), defaultValue: "pending" },
-  kyc_data:      { type: DataTypes.JSONB, defaultValue: {} },
-  reputation:    { type: DataTypes.FLOAT, defaultValue: 0 },
-  is_blacklisted:{ type: DataTypes.BOOLEAN, defaultValue: false },
+  role: {
+    type: DataTypes.ENUM("central_gov", "state_gov", "contractor", "community", "auditor_ngo"),
+    allowNull: false,
+  },
+  // KYC (primarily for contractors)
+  kyc_status:          { type: DataTypes.ENUM("not_required", "pending", "verified", "rejected"), defaultValue: "not_required" },
+  kyc_data:            { type: DataTypes.JSONB, defaultValue: {} },
+  kyc_verified_by:     { type: DataTypes.UUID },
+  kyc_verified_at:     { type: DataTypes.DATE },
+  kyc_rejection_reason:{ type: DataTypes.TEXT },
+
+  // Points & reputation
+  points:          { type: DataTypes.INTEGER, defaultValue: 0 },
+  reputation:      { type: DataTypes.FLOAT, defaultValue: 0 },
+  is_blacklisted:  { type: DataTypes.BOOLEAN, defaultValue: false },
+
+  // For admin-created accounts — who created them
+  created_by:      { type: DataTypes.UUID },
 }, { tableName: "users", timestamps: true });
 
 /* ───────── FUND REQUESTS ───────── */
@@ -34,6 +54,10 @@ const FundRequest = sequelize.define("FundRequest", {
   status:         { type: DataTypes.ENUM("pending", "approved", "rejected"), defaultValue: "pending" },
   approved_amount:{ type: DataTypes.DECIMAL(15, 2) },
   remarks:        { type: DataTypes.TEXT },
+  // Signing — who acted on this
+  acted_by:       { type: DataTypes.UUID },
+  acted_at:       { type: DataTypes.DATE },
+  signature_hash: { type: DataTypes.STRING },
 }, { tableName: "fund_requests", timestamps: true });
 
 /* ───────── TENDERS ───────── */
@@ -44,12 +68,13 @@ const Tender = sequelize.define("Tender", {
   scope:          { type: DataTypes.TEXT },
   location:       { type: DataTypes.STRING },
   district:       { type: DataTypes.STRING },
-  budget_hidden:  { type: DataTypes.DECIMAL(15, 2), allowNull: false },  // hidden from public
+  budget_hidden:  { type: DataTypes.DECIMAL(15, 2), allowNull: false },
   bid_deadline:   { type: DataTypes.DATE, allowNull: false },
   project_deadline:{ type: DataTypes.DATE, allowNull: false },
   status:         { type: DataTypes.ENUM("draft", "open", "closed", "awarded", "in_progress", "completed", "cancelled"), defaultValue: "draft" },
-  category:       { type: DataTypes.STRING },                    // e.g. road, bridge, building, water
-  qualification:  { type: DataTypes.JSONB, defaultValue: {} },  // min requirements
+  category:       { type: DataTypes.STRING },
+  qualification:  { type: DataTypes.JSONB, defaultValue: {} },
+  tranche_count:  { type: DataTypes.INTEGER, defaultValue: 5 },
 }, { tableName: "tenders", timestamps: true });
 
 /* ───────── BIDS ───────── */
@@ -58,19 +83,35 @@ const Bid = sequelize.define("Bid", {
   amount:         { type: DataTypes.DECIMAL(15, 2), allowNull: false },
   proposal:       { type: DataTypes.TEXT },
   timeline_days:  { type: DataTypes.INTEGER },
-  doc_hashes:     { type: DataTypes.JSONB, defaultValue: [] },   // hashes of uploaded docs
+  doc_hashes:     { type: DataTypes.JSONB, defaultValue: [] },
+  proximity_score:{ type: DataTypes.FLOAT },
   ai_score:       { type: DataTypes.FLOAT },
   status:         { type: DataTypes.ENUM("submitted", "shortlisted", "awarded", "rejected"), defaultValue: "submitted" },
 }, { tableName: "bids", timestamps: true });
 
 /* ───────── CONTRACTS ───────── */
 const Contract = sequelize.define("Contract", {
-  id:           { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-  award_date:   { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
-  total_amount: { type: DataTypes.DECIMAL(15, 2), allowNull: false },
-  status:       { type: DataTypes.ENUM("active", "completed", "terminated"), defaultValue: "active" },
-  escrow_balance:{ type: DataTypes.DECIMAL(15, 2), defaultValue: 0 },
+  id:             { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  award_date:     { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
+  total_amount:   { type: DataTypes.DECIMAL(15, 2), allowNull: false },
+  status:         { type: DataTypes.ENUM("active", "completed", "terminated"), defaultValue: "active" },
+  escrow_balance: { type: DataTypes.DECIMAL(15, 2), defaultValue: 0 },
+  tranche_count:  { type: DataTypes.INTEGER, defaultValue: 5 },
+  current_tranche:{ type: DataTypes.INTEGER, defaultValue: 1 },
+  awarded_by:     { type: DataTypes.UUID },
+  signature_hash: { type: DataTypes.STRING },
 }, { tableName: "contracts", timestamps: true });
+
+/* ───────── CONTRACT TRANCHES ───────── */
+const ContractTranche = sequelize.define("ContractTranche", {
+  id:            { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  sequence:      { type: DataTypes.INTEGER, allowNull: false },
+  amount:        { type: DataTypes.DECIMAL(15, 2), allowNull: false },
+  status:        { type: DataTypes.ENUM("pending", "disbursed", "held"), defaultValue: "pending" },
+  disbursed_at:  { type: DataTypes.DATE },
+  disbursed_by:  { type: DataTypes.UUID },
+  signature_hash:{ type: DataTypes.STRING },
+}, { tableName: "contract_tranches", timestamps: true });
 
 /* ───────── MILESTONES ───────── */
 const Milestone = sequelize.define("Milestone", {
@@ -80,20 +121,53 @@ const Milestone = sequelize.define("Milestone", {
   sequence:    { type: DataTypes.INTEGER, allowNull: false },
   amount:      { type: DataTypes.DECIMAL(15, 2), allowNull: false },
   due_date:    { type: DataTypes.DATE },
-  status:      { type: DataTypes.ENUM("pending", "proof_uploaded", "under_review", "approved", "rejected"), defaultValue: "pending" },
-  proof_files: { type: DataTypes.JSONB, defaultValue: [] },   // { url, hash, geo, timestamp }
+  status:      { type: DataTypes.ENUM("pending", "in_progress", "proof_uploaded", "under_review", "approved", "rejected"), defaultValue: "pending" },
+  proof_files: { type: DataTypes.JSONB, defaultValue: [] },
   review_notes:{ type: DataTypes.TEXT },
 }, { tableName: "milestones", timestamps: true });
 
 /* ───────── PAYMENTS ───────── */
 const Payment = sequelize.define("Payment", {
-  id:          { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-  amount:      { type: DataTypes.DECIMAL(15, 2), allowNull: false },
-  tx_hash:     { type: DataTypes.STRING },   // blockchain tx hash (future)
-  method:      { type: DataTypes.STRING, defaultValue: "escrow" },
-  status:      { type: DataTypes.ENUM("pending", "released", "failed"), defaultValue: "pending" },
-  released_at: { type: DataTypes.DATE },
+  id:             { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  amount:         { type: DataTypes.DECIMAL(15, 2), allowNull: false },
+  tx_hash:        { type: DataTypes.STRING },
+  method:         { type: DataTypes.STRING, defaultValue: "escrow" },
+  status:         { type: DataTypes.ENUM("pending", "released", "failed"), defaultValue: "pending" },
+  released_at:    { type: DataTypes.DATE },
+  released_by:    { type: DataTypes.UUID },
+  signature_hash: { type: DataTypes.STRING },
 }, { tableName: "payments", timestamps: true });
+
+/* ───────── WORK PROOFS ───────── */
+const WorkProof = sequelize.define("WorkProof", {
+  id:               { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  description:      { type: DataTypes.TEXT, allowNull: false },
+  photo_urls:       { type: DataTypes.JSONB, defaultValue: [] },
+  work_percentage:  { type: DataTypes.FLOAT, allowNull: false },
+  amount_requested: { type: DataTypes.DECIMAL(15, 2), allowNull: false },
+  status:           { type: DataTypes.ENUM("pending_assignment", "under_review", "approved", "rejected"), defaultValue: "pending_assignment" },
+  required_approvals:{ type: DataTypes.INTEGER, defaultValue: 0 },
+  approval_count:   { type: DataTypes.INTEGER, defaultValue: 0 },
+  rejection_count:  { type: DataTypes.INTEGER, defaultValue: 0 },
+  review_notes:     { type: DataTypes.TEXT },
+  warning_count:    { type: DataTypes.INTEGER, defaultValue: 0 },
+  reviewed_at:      { type: DataTypes.DATE },
+}, { tableName: "work_proofs", timestamps: true });
+
+/* ───────── PROOF REVIEWERS ───────── */
+const ProofReviewer = sequelize.define("ProofReviewer", {
+  id:          { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  assigned_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
+}, { tableName: "proof_reviewers", timestamps: true });
+
+/* ───────── PROOF VOTES ───────── */
+const ProofVote = sequelize.define("ProofVote", {
+  id:             { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  vote:           { type: DataTypes.ENUM("approve", "reject"), allowNull: false },
+  comment:        { type: DataTypes.TEXT },
+  signature_hash: { type: DataTypes.STRING },
+  voted_at:       { type: DataTypes.DATE, defaultValue: DataTypes.NOW },
+}, { tableName: "proof_votes", timestamps: true });
 
 /* ───────── COMPLAINTS ───────── */
 const Complaint = sequelize.define("Complaint", {
@@ -103,65 +177,77 @@ const Complaint = sequelize.define("Complaint", {
   evidence:    { type: DataTypes.JSONB, defaultValue: [] },
   geo_location:{ type: DataTypes.JSONB },
   severity:    { type: DataTypes.ENUM("low", "medium", "high", "critical"), defaultValue: "medium" },
-  status:      { type: DataTypes.ENUM("submitted", "triaged", "investigating", "verified", "dismissed", "action_taken"), defaultValue: "submitted" },
-  strike_count:{ type: DataTypes.INTEGER, defaultValue: 0 },
+  status: {
+    type: DataTypes.ENUM("submitted", "assigned_to_ngo", "investigating", "verified", "dismissed", "action_taken"),
+    defaultValue: "submitted",
+  },
+  investigation_result: { type: DataTypes.ENUM("pending", "confirmed_valid", "confirmed_fake"), defaultValue: "pending" },
+  investigation_notes:  { type: DataTypes.TEXT },
+  penalty_applied:      { type: DataTypes.BOOLEAN, defaultValue: false },
+  signature_hash:       { type: DataTypes.STRING },
 }, { tableName: "complaints", timestamps: true });
 
-/* ───────── AUDIT LOG (immutable ledger) ───────── */
+/* ───────── CASES (case management from complaints) ───────── */
+const Case = sequelize.define("Case", {
+  id:               { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  case_number:      { type: DataTypes.STRING, allowNull: false, unique: true },
+  status:           { type: DataTypes.ENUM("open", "investigating", "resolved", "closed", "appealed"), defaultValue: "open" },
+  priority:         { type: DataTypes.ENUM("low", "medium", "high", "critical"), defaultValue: "medium" },
+  penalty_details:  { type: DataTypes.JSONB, defaultValue: {} },
+  resolution_notes: { type: DataTypes.TEXT },
+  resolved_at:      { type: DataTypes.DATE },
+}, { tableName: "cases", timestamps: true });
+
+/* ───────── BLACKLIST REQUESTS ───────── */
+const BlacklistRequest = sequelize.define("BlacklistRequest", {
+  id:            { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  reason:        { type: DataTypes.TEXT, allowNull: false },
+  status:        { type: DataTypes.ENUM("pending", "approved", "rejected"), defaultValue: "pending" },
+  acted_by:      { type: DataTypes.UUID },
+  acted_at:      { type: DataTypes.DATE },
+  remarks:       { type: DataTypes.TEXT },
+}, { tableName: "blacklist_requests", timestamps: true });
+
+/* ───────── AUDIT LOG (immutable chain-hashed ledger) ───────── */
 const AuditLog = sequelize.define("AuditLog", {
-  id:          { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-  actor_id:    { type: DataTypes.UUID },
-  actor_role:  { type: DataTypes.STRING },
-  action:      { type: DataTypes.STRING, allowNull: false },
-  entity_type: { type: DataTypes.STRING },
-  entity_id:   { type: DataTypes.UUID },
-  details:     { type: DataTypes.JSONB, defaultValue: {} },
-  ip_address:  { type: DataTypes.STRING },
-  prev_hash:   { type: DataTypes.STRING },  // chain hash for tamper detection
-  entry_hash:  { type: DataTypes.STRING },
+  id:            { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  actor_id:      { type: DataTypes.UUID },
+  actor_role:    { type: DataTypes.STRING },
+  actor_name:    { type: DataTypes.STRING },
+  action:        { type: DataTypes.STRING, allowNull: false },
+  entity_type:   { type: DataTypes.STRING },
+  entity_id:     { type: DataTypes.UUID },
+  details:       { type: DataTypes.JSONB, defaultValue: {} },
+  ip_address:    { type: DataTypes.STRING },
+  prev_hash:     { type: DataTypes.STRING },
+  entry_hash:    { type: DataTypes.STRING },
+  signature_hash:{ type: DataTypes.STRING },
 }, { tableName: "audit_logs", timestamps: true, updatedAt: false });
 
-/* ───────── REPUTATION CREDITS ───────── */
-const ReputationCredit = sequelize.define("ReputationCredit", {
-  id:          { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-  points:      { type: DataTypes.FLOAT, allowNull: false },
-  reason:      { type: DataTypes.STRING },
-  project_id:  { type: DataTypes.UUID },
-}, { tableName: "reputation_credits", timestamps: true, updatedAt: false });
-
-/* ───────── WORK PROOFS (contractor uploads) ───────── */
-const WorkProof = sequelize.define("WorkProof", {
+/* ───────── POINTS LEDGER ───────── */
+const PointsLedger = sequelize.define("PointsLedger", {
   id:             { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-  description:    { type: DataTypes.TEXT, allowNull: false },
-  photo_urls:     { type: DataTypes.JSONB, defaultValue: [] },       // [{ url, hash, geo, timestamp }]
-  work_percentage:{ type: DataTypes.FLOAT, allowNull: false },       // e.g. 30 means 30% of remaining work
-  amount_requested:{ type: DataTypes.DECIMAL(15, 2), allowNull: false },
-  status:         { type: DataTypes.ENUM("pending_review", "approved", "rejected"), defaultValue: "pending_review" },
-  review_notes:   { type: DataTypes.TEXT },
-  warning_count:  { type: DataTypes.INTEGER, defaultValue: 0 },
-  reviewed_by:    { type: DataTypes.UUID },
-  reviewed_at:    { type: DataTypes.DATE },
-}, { tableName: "work_proofs", timestamps: true });
+  points:         { type: DataTypes.INTEGER, allowNull: false },
+  reason:         { type: DataTypes.STRING, allowNull: false },
+  reference_type: { type: DataTypes.STRING },
+  reference_id:   { type: DataTypes.UUID },
+}, { tableName: "points_ledger", timestamps: true, updatedAt: false });
 
 /* ───────── NOTIFICATIONS ───────── */
 const Notification = sequelize.define("Notification", {
   id:          { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
-  type:        { type: DataTypes.ENUM(
-    "proof_submitted", "proof_approved", "proof_rejected",
-    "payment_released", "contract_awarded", "bid_won",
-    "milestone_due", "warning_issued", "verification_needed"
-  ), allowNull: false },
+  type:        { type: DataTypes.STRING, allowNull: false },
   title:       { type: DataTypes.STRING, allowNull: false },
   message:     { type: DataTypes.TEXT },
-  entity_type: { type: DataTypes.STRING },    // "work_proof", "milestone", "contract", etc.
+  entity_type: { type: DataTypes.STRING },
   entity_id:   { type: DataTypes.UUID },
   is_read:     { type: DataTypes.BOOLEAN, defaultValue: false },
-  metadata:    { type: DataTypes.JSONB, defaultValue: {} },  // extra data (photo_urls, amounts, etc.)
+  metadata:    { type: DataTypes.JSONB, defaultValue: {} },
 }, { tableName: "notifications", timestamps: true, updatedAt: false });
 
 /* ═══════════════════════════ RELATIONSHIPS ═══════════════════════════ */
 
-// State ↔ Users
+// State ↔ Users (multiple state_gov per state)
 State.hasMany(User, { foreignKey: "state_id" });
 User.belongsTo(State, { foreignKey: "state_id" });
 
@@ -186,6 +272,10 @@ Tender.hasOne(Contract, { foreignKey: "tender_id" });
 Contract.belongsTo(Tender, { foreignKey: "tender_id" });
 Contract.belongsTo(User, { as: "contractor", foreignKey: "contractor_id" });
 
+// Contract ↔ ContractTranches
+Contract.hasMany(ContractTranche, { foreignKey: "contract_id" });
+ContractTranche.belongsTo(Contract, { foreignKey: "contract_id" });
+
 // Contract ↔ Milestones
 Contract.hasMany(Milestone, { foreignKey: "contract_id" });
 Milestone.belongsTo(Contract, { foreignKey: "contract_id" });
@@ -194,22 +284,53 @@ Milestone.belongsTo(Contract, { foreignKey: "contract_id" });
 Milestone.hasOne(Payment, { foreignKey: "milestone_id" });
 Payment.belongsTo(Milestone, { foreignKey: "milestone_id" });
 
-// Tender/Contract ↔ Complaints
-Complaint.belongsTo(Tender, { foreignKey: "tender_id" });
-Complaint.belongsTo(User, { as: "reporter", foreignKey: "reporter_id" });
-Complaint.belongsTo(User, { as: "assignedTo", foreignKey: "assigned_to" });
+// ContractTranche ↔ Payment
+ContractTranche.hasOne(Payment, { foreignKey: "tranche_id" });
+Payment.belongsTo(ContractTranche, { foreignKey: "tranche_id" });
 
-// Reputation credits → User
-User.hasMany(ReputationCredit, { foreignKey: "user_id" });
-ReputationCredit.belongsTo(User, { foreignKey: "user_id" });
-
-// WorkProof → Milestone + Contract + User
+// WorkProof → Milestone + Contract + User + Tranche
 Milestone.hasMany(WorkProof, { foreignKey: "milestone_id" });
 WorkProof.belongsTo(Milestone, { foreignKey: "milestone_id" });
 Contract.hasMany(WorkProof, { foreignKey: "contract_id" });
 WorkProof.belongsTo(Contract, { foreignKey: "contract_id" });
 User.hasMany(WorkProof, { as: "submittedProofs", foreignKey: "submitted_by" });
 WorkProof.belongsTo(User, { as: "submittedBy", foreignKey: "submitted_by" });
+ContractTranche.hasMany(WorkProof, { foreignKey: "tranche_id" });
+WorkProof.belongsTo(ContractTranche, { foreignKey: "tranche_id" });
+
+// ProofReviewer → WorkProof + User
+WorkProof.hasMany(ProofReviewer, { foreignKey: "work_proof_id" });
+ProofReviewer.belongsTo(WorkProof, { foreignKey: "work_proof_id" });
+User.hasMany(ProofReviewer, { as: "assignedReviews", foreignKey: "reviewer_id" });
+ProofReviewer.belongsTo(User, { as: "reviewer", foreignKey: "reviewer_id" });
+ProofReviewer.belongsTo(User, { as: "assignedBy", foreignKey: "assigned_by" });
+
+// ProofVote → WorkProof + User
+WorkProof.hasMany(ProofVote, { foreignKey: "work_proof_id" });
+ProofVote.belongsTo(WorkProof, { foreignKey: "work_proof_id" });
+User.hasMany(ProofVote, { as: "proofVotes", foreignKey: "voter_id" });
+ProofVote.belongsTo(User, { as: "voter", foreignKey: "voter_id" });
+
+// Complaints → Tender + Users (reporter, NGO, central assigner)
+Complaint.belongsTo(Tender, { foreignKey: "tender_id" });
+Complaint.belongsTo(User, { as: "reporter", foreignKey: "reporter_id" });
+Complaint.belongsTo(User, { as: "assignedNgo", foreignKey: "ngo_assigned_id" });
+Complaint.belongsTo(User, { as: "assignedBy", foreignKey: "ngo_assigned_by" });
+
+// Case → Complaint + Users
+Complaint.hasOne(Case, { foreignKey: "complaint_id" });
+Case.belongsTo(Complaint, { foreignKey: "complaint_id" });
+Case.belongsTo(User, { as: "assignedTo", foreignKey: "assigned_to" });
+Case.belongsTo(User, { as: "createdBy", foreignKey: "created_by" });
+
+// BlacklistRequest → User (target + requester)
+BlacklistRequest.belongsTo(User, { as: "targetUser", foreignKey: "user_id" });
+BlacklistRequest.belongsTo(User, { as: "requestedBy", foreignKey: "requested_by" });
+User.hasMany(BlacklistRequest, { foreignKey: "user_id" });
+
+// PointsLedger → User
+User.hasMany(PointsLedger, { foreignKey: "user_id" });
+PointsLedger.belongsTo(User, { foreignKey: "user_id" });
 
 // Notifications → User
 User.hasMany(Notification, { foreignKey: "user_id" });
@@ -223,11 +344,16 @@ module.exports = {
   Tender,
   Bid,
   Contract,
+  ContractTranche,
   Milestone,
   Payment,
-  Complaint,
-  AuditLog,
-  ReputationCredit,
   WorkProof,
+  ProofReviewer,
+  ProofVote,
+  Complaint,
+  Case,
+  BlacklistRequest,
+  AuditLog,
+  PointsLedger,
   Notification,
 };

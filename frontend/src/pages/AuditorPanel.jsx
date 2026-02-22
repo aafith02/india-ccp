@@ -1,142 +1,176 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
-import api from "../api/client";
 import { useAuth } from "../context/AuthContext";
-import { AlertTriangle, CheckCircle, XCircle, Eye, ClipboardCheck, ArrowRight } from "lucide-react";
+import api from "../api/client";
+import { toast } from "react-toastify";
+
+const statusColors = {
+  submitted: "bg-blue-100 text-blue-700",
+  assigned_to_ngo: "bg-purple-100 text-purple-700",
+  investigating: "bg-amber-100 text-amber-700",
+  verified: "bg-green-100 text-green-700",
+  dismissed: "bg-gray-100 text-gray-500",
+  action_taken: "bg-red-100 text-red-600",
+};
 
 export default function AuditorPanel() {
   const { user } = useAuth();
   const [complaints, setComplaints] = useState([]);
-  const [filter, setFilter] = useState("");
+  const [ngos, setNgos] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedNgo, setSelectedNgo] = useState({});
+  const [investigationNotes, setInvestigationNotes] = useState({});
 
-  const loadComplaints = () => {
-    const params = filter ? `?status=${filter}` : "";
-    api.get(`/complaints${params}`).then(({ data }) => {
-      setComplaints(data);
-      setLoading(false);
-    }).catch(() => setLoading(false));
-  };
-
-  useEffect(() => { loadComplaints(); }, [filter]);
-
-  const updateStatus = async (id, status) => {
-    try {
-      await api.patch(`/complaints/${id}`, { status });
-      loadComplaints();
-    } catch (err) {
-      alert(err.response?.data?.error || "Update failed");
+  useEffect(() => {
+    fetchComplaints();
+    if (user?.role === "central_gov") {
+      api.get("/complaints/ngos").then(r => setNgos(r.data.ngos || [])).catch(() => {});
     }
-  };
+  }, []);
 
-  const severityColor = {
-    low: "bg-gray-100 text-gray-600",
-    medium: "bg-amber-100 text-amber-700",
-    high: "bg-orange-100 text-orange-700",
-    critical: "bg-red-100 text-red-700",
-  };
+  async function fetchComplaints() {
+    try {
+      const { data } = await api.get("/complaints");
+      setComplaints(data.complaints || []);
+    } catch {}
+    setLoading(false);
+  }
+
+  async function assignNgo(complaintId) {
+    const ngoId = selectedNgo[complaintId];
+    if (!ngoId) return toast.warn("Select an NGO first");
+    try {
+      await api.patch(`/complaints/${complaintId}/assign-ngo`, { ngo_user_id: ngoId });
+      toast.success("NGO assigned successfully");
+      fetchComplaints();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Assignment failed");
+    }
+  }
+
+  async function startInvestigation(complaintId) {
+    try {
+      await api.patch(`/complaints/${complaintId}/start-investigation`);
+      toast.success("Investigation started");
+      fetchComplaints();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Failed to start investigation");
+    }
+  }
+
+  async function submitInvestigation(complaintId, result) {
+    try {
+      await api.patch(`/complaints/${complaintId}/investigate`, {
+        result: result,
+        notes: investigationNotes[complaintId] || "",
+      });
+      toast.success(`Complaint marked as ${result}`);
+      fetchComplaints();
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Failed");
+    }
+  }
+
+  if (loading) return <div className="p-8 text-gray-500">Loading complaints...</div>;
 
   return (
-    <div className="space-y-6">
-      {/* Verification CTA */}
-      <Link
-        to="/verify"
-        className="block bg-gradient-to-r from-violet-500 to-purple-600 rounded-xl p-4 text-white shadow-md hover:shadow-lg transition"
-      >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center">
-              <ClipboardCheck size={22} className="text-white" />
-            </div>
-            <div>
-              <p className="font-semibold">Work Proof Verification Center</p>
-              <p className="text-violet-100 text-sm">Review and verify contractor work proofs for active projects</p>
-            </div>
-          </div>
-          <ArrowRight size={20} className="text-violet-100" />
-        </div>
-      </Link>
-
+    <div className="p-6 space-y-6">
       <div>
-        <h2 className="font-heading font-bold text-2xl text-gray-800">Complaint Management</h2>
-        <p className="text-sm text-gray-500 mt-1">Review, investigate, and resolve reports</p>
+        <h1 className="text-2xl font-bold text-gray-800">
+          {user?.role === "central_gov" ? "Complaint Management" : "NGO Investigations"}
+        </h1>
+        <p className="text-gray-500 text-sm mt-1">
+          {user?.role === "central_gov" ? "Assign NGOs to investigate complaints" : "Review and investigate assigned complaints"}
+        </p>
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-2">
-        {["", "submitted", "triaged", "investigating", "verified", "dismissed"].map(s => (
-          <button
-            key={s}
-            onClick={() => setFilter(s)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-full transition ${
-              filter === s ? "bg-teal-500 text-white" : "bg-white text-gray-600 hover:bg-gray-100 shadow-sm"
-            }`}
-          >
-            {s || "All"}
-          </button>
-        ))}
-      </div>
-
-      {/* Complaints list */}
-      {loading ? (
-        <div className="space-y-3">
-          {[1, 2, 3].map(i => <div key={i} className="h-24 bg-white rounded-xl animate-pulse" />)}
-        </div>
-      ) : complaints.length === 0 ? (
-        <div className="bg-white rounded-xl shadow-card p-8 text-center text-gray-400">
-          No complaints matching the filter.
-        </div>
+      {complaints.length === 0 ? (
+        <div className="bg-gray-50 text-gray-500 p-6 rounded-xl text-center">No complaints to review</div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {complaints.map(c => (
-            <div key={c.id} className="bg-white rounded-xl shadow-card p-5 animate-fade-up">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <AlertTriangle size={14} className="text-coral-500" />
-                    <h4 className="font-semibold text-gray-700 text-sm">{c.subject}</h4>
-                  </div>
-                  <p className="text-sm text-gray-500 line-clamp-2">{c.description}</p>
-                  <div className="flex items-center gap-3 mt-2 text-xs text-gray-400">
-                    <span>By: {c.reporter?.name || "Anonymous"}</span>
-                    <span>Tender: {c.Tender?.title || "N/A"}</span>
-                    <span>{new Date(c.createdAt).toLocaleDateString("en-IN")}</span>
+            <div key={c.id} className="bg-white rounded-xl shadow-sm border p-5">
+              <div className="flex items-start justify-between mb-3">
+                <div>
+                  <h3 className="font-semibold text-gray-800">{c.subject}</h3>
+                  <p className="text-sm text-gray-500 mt-1">{c.description}</p>
+                  <div className="flex gap-4 mt-2 text-xs text-gray-400">
+                    <span>Reporter: {c.reporter?.name || "Anonymous"}</span>
+                    <span>Severity: <span className={`font-medium ${c.severity === "high" ? "text-red-500" : c.severity === "medium" ? "text-amber-500" : "text-gray-500"}`}>{c.severity}</span></span>
+                    <span>{new Date(c.createdAt).toLocaleDateString()}</span>
                   </div>
                 </div>
-
-                <div className="flex flex-col items-end gap-2">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${severityColor[c.severity]}`}>
-                    {c.severity}
-                  </span>
-                  <span className={`text-xs px-2 py-0.5 rounded-full badge-${c.status === "verified" ? "verified" : c.status === "dismissed" ? "rejected" : "pending"}`}>
-                    {c.status}
-                  </span>
-                </div>
+                <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${statusColors[c.status] || "bg-gray-100"}`}>
+                  {c.status?.replace(/_/g, " ")}
+                </span>
               </div>
 
-              {/* Actions */}
-              {(user?.role === "central_gov" || user?.role === "auditor_ngo") && (
-                <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100">
-                  {c.status === "submitted" && (
-                    <button onClick={() => updateStatus(c.id, "triaged")} className="px-3 py-1.5 text-xs bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition flex items-center gap-1">
-                      <Eye size={12} /> Triage
+              {/* Evidence */}
+              {c.evidence?.length > 0 && (
+                <div className="flex gap-2 mb-3">
+                  {c.evidence.map((e, i) => (
+                    <span key={i} className="px-2 py-1 bg-gray-100 text-gray-500 rounded text-xs">{e.type}: {e.url}</span>
+                  ))}
+                </div>
+              )}
+
+              {/* Central: Assign NGO */}
+              {user?.role === "central_gov" && c.status === "submitted" && (
+                <div className="flex gap-2 items-center mt-3 pt-3 border-t">
+                  <select
+                    className="border rounded-lg px-3 py-2 text-sm flex-1"
+                    value={selectedNgo[c.id] || ""}
+                    onChange={e => setSelectedNgo(p => ({ ...p, [c.id]: e.target.value }))}
+                  >
+                    <option value="">Select NGO to investigate...</option>
+                    {ngos.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+                  </select>
+                  <button onClick={() => assignNgo(c.id)} className="px-4 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 transition">
+                    Assign NGO
+                  </button>
+                </div>
+              )}
+
+              {/* Show assigned NGO */}
+              {c.assignedNgo && (
+                <div className="mt-2 text-sm text-purple-600">
+                  Assigned to: {c.assignedNgo.name}
+                </div>
+              )}
+
+              {/* NGO: Start investigation button */}
+              {user?.role === "auditor_ngo" && c.status === "assigned_to_ngo" && (
+                <div className="mt-3 pt-3 border-t">
+                  <button onClick={() => startInvestigation(c.id)} className="px-4 py-2 bg-amber-600 text-white text-sm rounded-lg hover:bg-amber-700 transition">
+                    Start Investigation
+                  </button>
+                </div>
+              )}
+
+              {/* NGO: Submit investigation */}
+              {user?.role === "auditor_ngo" && (c.status === "assigned_to_ngo" || c.status === "investigating") && (
+                <div className="mt-3 pt-3 border-t">
+                  <textarea
+                    className="w-full border rounded-lg px-3 py-2 text-sm mb-3"
+                    rows={2}
+                    placeholder="Investigation findings..."
+                    value={investigationNotes[c.id] || ""}
+                    onChange={e => setInvestigationNotes(p => ({ ...p, [c.id]: e.target.value }))}
+                  />
+                  <div className="flex gap-2">
+                    <button onClick={() => submitInvestigation(c.id, "confirmed_valid")} className="px-4 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition">
+                      Complaint Valid — Penalize
                     </button>
-                  )}
-                  {["submitted", "triaged"].includes(c.status) && (
-                    <button onClick={() => updateStatus(c.id, "investigating")} className="px-3 py-1.5 text-xs bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-100 transition">
-                      Investigate
+                    <button onClick={() => submitInvestigation(c.id, "confirmed_fake")} className="px-4 py-2 bg-gray-600 text-white text-sm rounded-lg hover:bg-gray-700 transition">
+                      Complaint Invalid — Dismiss
                     </button>
-                  )}
-                  {c.status === "investigating" && (
-                    <>
-                      <button onClick={() => updateStatus(c.id, "verified")} className="px-3 py-1.5 text-xs bg-green-50 text-green-600 rounded-lg hover:bg-green-100 transition flex items-center gap-1">
-                        <CheckCircle size={12} /> Verify
-                      </button>
-                      <button onClick={() => updateStatus(c.id, "dismissed")} className="px-3 py-1.5 text-xs bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition flex items-center gap-1">
-                        <XCircle size={12} /> Dismiss
-                      </button>
-                    </>
-                  )}
+                  </div>
+                </div>
+              )}
+
+              {/* Investigation result */}
+              {c.investigation_result && (
+                <div className={`mt-3 p-3 rounded-lg text-sm ${c.investigation_result === "confirmed_valid" ? "bg-red-50 text-red-700" : "bg-gray-50 text-gray-600"}`}>
+                  Investigation: {c.investigation_result === "confirmed_valid" ? "Complaint confirmed — penalties applied" : "Complaint dismissed — no action taken"}
                 </div>
               )}
             </div>

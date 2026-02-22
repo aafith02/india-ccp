@@ -1,97 +1,82 @@
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import {
-  LayoutDashboard, FileText, Gavel, Wallet, Users, Shield,
-  AlertTriangle, Globe, BookOpen, Building2, Eye, ClipboardCheck
+  Landmark, ClipboardList, Wallet, ShieldAlert, Star, BarChart3,
+  Building2, PlusCircle, Search, CheckCircle, Hammer, SearchCheck,
+  Home, AlertTriangle, Briefcase, ShieldBan,
 } from "lucide-react";
 
-const navItems = {
+const linkBase = "flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors";
+const active = "bg-white/20 text-white";
+const inactive = "text-white/70 hover:bg-white/10 hover:text-white";
+
+function SideLink({ to, icon: Icon, label }) {
+  return (
+    <NavLink to={to} className={({ isActive }) => `${linkBase} ${isActive ? active : inactive}`}>
+      <Icon size={18} />{label}
+    </NavLink>
+  );
+}
+
+const NAV = {
   central_gov: [
-    { to: "/dashboard",   icon: LayoutDashboard, label: "Dashboard" },
-    { to: "/funding",     icon: Wallet,          label: "Fund Requests" },
-    { to: "/tenders",     icon: FileText,        label: "All Tenders" },
-    { to: "/contracts",   icon: Gavel,           label: "Contracts" },
-    { to: "/complaints",  icon: AlertTriangle,   label: "Complaints" },
-    { to: "/ledger",      icon: BookOpen,        label: "Audit Ledger" },
+    { to: "/dashboard", icon: Landmark, label: "Dashboard" },
+    { to: "/tenders", icon: ClipboardList, label: "All Tenders" },
+    { to: "/funding", icon: Wallet, label: "Fund Requests" },
+    { to: "/complaints", icon: ShieldAlert, label: "Complaints" },
+    { to: "/cases", icon: Briefcase, label: "Cases" },
+    { to: "/blacklist", icon: ShieldBan, label: "Blacklist" },
+    { to: "/points", icon: Star, label: "Points & Rewards" },
+    { to: "/ledger", icon: BarChart3, label: "Public Ledger" },
   ],
   state_gov: [
-    { to: "/dashboard",   icon: LayoutDashboard, label: "Dashboard" },
-    { to: "/funding",     icon: Wallet,          label: "Fund Requests" },
-    { to: "/tenders",     icon: FileText,        label: "Tenders" },
-    { to: "/contracts",   icon: Gavel,           label: "Contracts" },
-    { to: "/verify",      icon: ClipboardCheck,  label: "Verify Work" },
-    { to: "/contractors", icon: Users,           label: "Contractors" },
-    { to: "/complaints",  icon: AlertTriangle,   label: "Complaints" },
+    { to: "/dashboard", icon: Building2, label: "Dashboard" },
+    { to: "/tenders", icon: ClipboardList, label: "Tenders" },
+    { to: "/tenders/new", icon: PlusCircle, label: "Create Tender" },
+    { to: "/kyc", icon: Search, label: "KYC Verification" },
+    { to: "/verify", icon: CheckCircle, label: "Work Proof Voting" },
+    { to: "/funding", icon: Wallet, label: "Funding" },
+    { to: "/blacklist", icon: ShieldBan, label: "Blacklist" },
+    { to: "/points", icon: Star, label: "Points" },
+    { to: "/ledger", icon: BarChart3, label: "Public Ledger" },
   ],
   contractor: [
-    { to: "/dashboard",   icon: LayoutDashboard, label: "Dashboard" },
-    { to: "/tenders",     icon: FileText,        label: "Open Tenders" },
-    { to: "/my-bids",     icon: Gavel,           label: "My Bids" },
-    { to: "/my-contracts",icon: Building2,       label: "My Projects" },
-  ],
-  community: [
-    { to: "/portal",      icon: Globe,           label: "Projects" },
-    { to: "/verify",      icon: Eye,             label: "Verify Projects" },
-    { to: "/ledger",      icon: BookOpen,        label: "Public Ledger" },
-    { to: "/report",      icon: AlertTriangle,   label: "Report Issue" },
+    { to: "/dashboard", icon: Hammer, label: "Dashboard" },
+    { to: "/tenders", icon: ClipboardList, label: "Browse Tenders" },
+    { to: "/points", icon: Star, label: "My Points" },
+    { to: "/ledger", icon: BarChart3, label: "Public Ledger" },
   ],
   auditor_ngo: [
-    { to: "/dashboard",   icon: LayoutDashboard, label: "Dashboard" },
-    { to: "/verify",      icon: ClipboardCheck,  label: "Verify Work" },
-    { to: "/complaints",  icon: AlertTriangle,   label: "Complaints" },
-    { to: "/ledger",      icon: BookOpen,        label: "Audit Ledger" },
+    { to: "/dashboard", icon: SearchCheck, label: "Investigations" },
+    { to: "/complaints", icon: ShieldAlert, label: "Complaints" },
+    { to: "/cases", icon: Briefcase, label: "Cases" },
+    { to: "/ledger", icon: BarChart3, label: "Public Ledger" },
+  ],
+  community: [
+    { to: "/dashboard", icon: Home, label: "Portal" },
+    { to: "/report", icon: AlertTriangle, label: "Report Issue" },
+    { to: "/points", icon: Star, label: "Leaderboard" },
+    { to: "/ledger", icon: BarChart3, label: "Public Ledger" },
   ],
 };
 
-export default function Sidebar({ theme }) {
+export default function Sidebar() {
   const { user } = useAuth();
-  const items = navItems[user?.role] || navItems.community;
+  const links = NAV[user?.role] || NAV.community;
 
   return (
-    <aside
-      className="w-64 flex flex-col border-r border-sand-200 shadow-card"
-      style={{ backgroundColor: theme.primary + "0D" }} // very faint primary tint
-    >
-      {/* ── Logo area ── */}
-      <div className="flex flex-col items-center py-6 px-4 border-b border-sand-200">
-        <div
-          className="w-16 h-16 rounded-xl flex items-center justify-center text-white font-heading text-2xl font-bold shadow-md"
-          style={{ backgroundColor: theme.primary }}
-        >
-          {user?.state?.code || "IN"}
-        </div>
-        <h2 className="mt-3 font-heading font-semibold text-lg text-center" style={{ color: theme.primary }}>
-          {user?.state?.name || "TenderGuard"}
-        </h2>
-        <span className="text-xs text-gray-500 mt-1 capitalize">{user?.role?.replace("_", " ")}</span>
+    <aside className="w-56 bg-gradient-to-b from-teal-700 to-teal-900 min-h-screen flex flex-col py-6 px-3 gap-1">
+      <div className="px-4 mb-6">
+        <h2 className="text-white font-bold text-lg tracking-wide">TenderGuard</h2>
+        <p className="text-teal-200/60 text-xs mt-0.5">v2 — Anti-Bribery Platform</p>
       </div>
-
-      {/* ── Navigation ── */}
-      <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
-        {items.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-                isActive
-                  ? "text-white shadow-md"
-                  : "text-gray-600 hover:bg-sand-100 hover:text-gray-800"
-              }`
-            }
-            style={({ isActive }) =>
-              isActive ? { backgroundColor: theme.primary } : {}
-            }
-          >
-            <item.icon size={18} />
-            {item.label}
-          </NavLink>
-        ))}
+      <nav className="flex flex-col gap-0.5">
+        {links.map((l) => <SideLink key={l.to} {...l} />)}
       </nav>
-
-      {/* ── Footer ── */}
-      <div className="p-4 border-t border-sand-200 text-center text-xs text-gray-400">
-        TenderGuard v1.0
+      <div className="mt-auto px-4 py-3 text-teal-200/40 text-[10px]">
+        <p>Signed in as</p>
+        <p className="text-teal-100/80 text-xs font-medium truncate">{user?.name}</p>
+        <p className="capitalize">{user?.role?.replace("_", " ")}</p>
       </div>
     </aside>
   );

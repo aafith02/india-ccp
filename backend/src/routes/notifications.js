@@ -1,60 +1,52 @@
 const router = require("express").Router();
-const { Notification, User } = require("../models");
+const { Notification } = require("../models");
 const { authenticate } = require("../middleware/auth");
 
-/* ── Get my notifications ── */
+/* GET / — User's notifications */
 router.get("/", authenticate, async (req, res) => {
   try {
-    const { unread_only, limit = 50, page = 1 } = req.query;
     const where = { user_id: req.user.id };
-    if (unread_only === "true") where.is_read = false;
+    if (req.query.unread_only === "true") where.is_read = false;
+    const limit = parseInt(req.query.limit) || 20;
 
-    const offset = (parseInt(page) - 1) * parseInt(limit);
-    const { count, rows } = await Notification.findAndCountAll({
-      where,
-      order: [["createdAt", "DESC"]],
-      limit: parseInt(limit),
-      offset,
+    const notifications = await Notification.findAll({
+      where, order: [["createdAt", "DESC"]], limit,
     });
-
-    res.json({ total: count, page: parseInt(page), notifications: rows });
+    res.json({ notifications });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch notifications" });
   }
 });
 
-/* ── Get unread count ── */
+/* GET /unread-count */
 router.get("/unread-count", authenticate, async (req, res) => {
   try {
     const count = await Notification.count({ where: { user_id: req.user.id, is_read: false } });
     res.json({ count });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed" });
   }
 });
 
-/* ── Mark one as read ── */
+/* PATCH /:id/read */
 router.patch("/:id/read", authenticate, async (req, res) => {
   try {
-    const notif = await Notification.findByPk(req.params.id);
-    if (!notif || notif.user_id !== req.user.id)
-      return res.status(404).json({ error: "Notification not found" });
-
-    notif.is_read = true;
-    await notif.save();
-    res.json(notif);
+    const n = await Notification.findByPk(req.params.id);
+    if (!n || n.user_id !== req.user.id) return res.status(404).json({ error: "Not found" });
+    await n.update({ is_read: true });
+    res.json({ notification: n });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed" });
   }
 });
 
-/* ── Mark all as read ── */
+/* PATCH /read-all */
 router.patch("/read-all", authenticate, async (req, res) => {
   try {
     await Notification.update({ is_read: true }, { where: { user_id: req.user.id, is_read: false } });
-    res.json({ success: true });
+    res.json({ message: "All marked read" });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed" });
   }
 });
 

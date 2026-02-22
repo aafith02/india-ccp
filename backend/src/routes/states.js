@@ -1,85 +1,94 @@
 const router = require("express").Router();
-const { State, Tender, User, Contract, Bid, Complaint, FundRequest, WorkProof } = require("../models");
+const { State, User, Tender, Contract, FundRequest, WorkProof, Bid } = require("../models");
 const { authenticate } = require("../middleware/auth");
 const { authorize } = require("../middleware/roles");
+const { Op } = require("sequelize");
 
-/* ── List all states ── */
-router.get("/", async (_req, res) => {
+/* GET / — List all states */
+router.get("/", async (req, res) => {
   try {
     const states = await State.findAll({ order: [["name", "ASC"]] });
-    res.json(states);
+    res.json({ states });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch states" });
   }
 });
 
-/* ── Get single state with comprehensive stats ── */
+/* GET /:id — State detail with stats */
 router.get("/:id", async (req, res) => {
   try {
-  const state = await State.findByPk(req.params.id, {
-    include: [
-      { model: Tender, attributes: ["id", "title", "status", "location", "district", "category"] },
-    ],
-  });
-  if (!state) return res.status(404).json({ error: "State not found" });
+    const state = await State.findByPk(req.params.id);
+    if (!state) return res.status(404).json({ error: "State not found" });
 
-  const contractorCount = await User.count({ where: { state_id: state.id, role: "contractor" } });
-  const communityCount = await User.count({ where: { state_id: state.id, role: "community" } });
-  const ngoCount = await User.count({ where: { role: "auditor_ngo" } });
+    // Aggregate stats
+    const [stateGovCount, contractorCount, communityCount, tenderCount, contractCount, pendingKyc] = await Promise.all([
+      User.count({ where: { state_id: state.id, role: "state_gov" } }),
+      User.count({ where: { state_id: state.id, role: "contractor" } }),
+      User.count({ where: { state_id: state.id, role: "community" } }),
+      Tender.count({ where: { state_id: state.id } }),
+      Contract.count({ include: [{ model: Tender, where: { state_id: state.id }, attributes: [] }] }),
+      User.count({ where: { state_id: state.id, role: "contractor", kyc_status: "pending" } }),
+    ]);
 
-  // Tender stats
-  const tenderIds = state.Tenders.map(t => t.id);
-  const totalBids = tenderIds.length > 0 ? await Bid.count({ where: { tender_id: tenderIds } }) : 0;
-  const activeContracts = tenderIds.length > 0 ? await Contract.count({ where: { tender_id: tenderIds, status: "active" } }) : 0;
-  const completedContracts = tenderIds.length > 0 ? await Contract.count({ where: { tender_id: tenderIds, status: "completed" } }) : 0;
-  const complaintCount = tenderIds.length > 0 ? await Complaint.count({ where: { tender_id: tenderIds } }) : 0;
-
-  // Fund stats
-  const fundRequests = await FundRequest.findAll({ where: { state_id: state.id } });
-  const totalFundApproved = fundRequests
-    .filter(f => f.status === "approved")
-    .reduce((sum, f) => sum + parseFloat(f.approved_amount || 0), 0);
-  const totalFundPending = fundRequests
-    .filter(f => f.status === "pending")
-    .reduce((sum, f) => sum + parseFloat(f.amount || 0), 0);
-
-  // Pending verifications
-  const pendingVerifications = tenderIds.length > 0
-    ? await WorkProof.count({
-        where: { status: "pending_review" },
-        include: [{ model: Contract, where: { tender_id: tenderIds }, attributes: [] }],
-      }).catch(() => 0)
-    : 0;
-
-  res.json({
-    ...state.toJSON(),
-    contractorCount,
-    communityCount,
-    ngoCount,
-    totalBids,
-    activeContracts,
-    completedContracts,
-    complaintCount,
-    totalFundApproved,
-    totalFundPending,
-    pendingVerifications,
-  });
+    res.json({
+      state,
+      stats: { stateGovCount, contractorCount, communityCount, tenderCount, contractCount, pendingKyc },
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Failed to fetch state" });
   }
 });
 
-/* ── Update state theme/assets (central gov only) ── */
-router.put("/:id", authenticate, authorize("central_gov"), async (req, res) => {
-  const state = await State.findByPk(req.params.id);
-  if (!state) return res.status(404).json({ error: "State not found" });
+/* GET /:id/members — List state_gov members */
+router.get("/:id/members", async (req, res) => {
+  try {
+    const members = await User.findAll({
+      where: { state_id: req.params.id, role: "state_gov" },
+      attributes: ["id", "name", "email", "points", "reputation", "createdAt"],
+      order: [["name", "ASC"]],
+    });
+    res.json({ members });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch members" });
+  }
+});
 
-  const { theme, logo_url, map_url } = req.body;
-  if (theme) state.theme = theme;
-  if (logo_url) state.logo_url = logo_url;
-  if (map_url) state.map_url = map_url;
-  await state.save();
-  res.json(state);
+/* GET /:id/finance — State financial summary (balance, received, allocated) */
+router.get("/:id/finance", authenticate, authorize("state_gov", "central_gov"), async (req, res) => {
+  try {
+    const state = await State.findByPk(req.params.id);
+    if (!state) return res.status(404).json({ error: "State not found" });
+
+    // If state_gov, enforce same state
+    if (req.user.role === "state_gov" && req.user.state_id !== state.id) {
+      return res.status(403).json({ error: "Not your state" });
+    }
+
+    // Count active contracts & their total value
+    const activeContracts = await Contract.findAll({
+      include: [{ model: Tender, where: { state_id: state.id }, attributes: [] }],
+      where: { status: "active" },
+    });
+    const activeContractValue = activeContracts.reduce((sum, c) => sum + parseFloat(c.total_amount), 0);
+
+    // Pending fund requests
+    const pendingRequests = await FundRequest.findAll({
+      where: { state_id: state.id, status: "pending" },
+    });
+    const pendingAmount = pendingRequests.reduce((sum, f) => sum + parseFloat(f.amount), 0);
+
+    res.json({
+      balance: parseFloat(state.balance || 0),
+      total_received: parseFloat(state.total_received || 0),
+      total_allocated: parseFloat(state.total_allocated || 0),
+      active_contract_value: activeContractValue,
+      pending_fund_requests: pendingAmount,
+      available_for_tenders: parseFloat(state.balance || 0),
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch financial data" });
+  }
 });
 
 module.exports = router;
+

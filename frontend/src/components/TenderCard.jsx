@@ -1,56 +1,34 @@
 import { Link } from "react-router-dom";
-import { MapPin, Calendar, Clock } from "lucide-react";
 
-export default function TenderCard({ tender, showBidButton = false }) {
-  const deadline = new Date(tender.bid_deadline);
-  const isExpired = deadline < new Date();
-  const daysLeft = Math.max(0, Math.ceil((deadline - new Date()) / (1000 * 60 * 60 * 24)));
+const statusColor = {
+  draft: "bg-gray-100 text-gray-600",
+  open: "bg-green-100 text-green-700",
+  closed: "bg-amber-100 text-amber-700",
+  awarded: "bg-blue-100 text-blue-700",
+  cancelled: "bg-red-100 text-red-600",
+};
 
+export default function TenderCard({ tender }) {
+  const t = tender;
   return (
-    <div className="bg-white rounded-xl shadow-card p-5 hover:shadow-elevated transition-shadow duration-300 animate-fade-up">
+    <Link to={`/tenders/${t.id}`}
+      className="bg-white rounded-xl border p-4 hover:shadow-md transition block">
       <div className="flex items-start justify-between">
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-2">
-            <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium badge-${tender.status}`}>
-              {tender.status}
-            </span>
-            {tender.State && (
-              <span className="text-xs text-gray-400">{tender.State.name}</span>
-            )}
+        <div className="flex-1 min-w-0">
+          <h3 className="font-semibold text-gray-800 truncate">{t.title}</h3>
+          <p className="text-xs text-gray-500 mt-1 line-clamp-2">{t.description}</p>
+          <div className="flex items-center gap-2 mt-2 text-xs text-gray-400">
+            <span className="capitalize">{t.category}</span>
+            <span>•</span>
+            <span>{t.location || t.district}</span>
+            <span>•</span>
+            <span>{t.tranche_count || 4} tranches</span>
           </div>
-          <h3 className="font-heading font-semibold text-base text-gray-800 mb-1">
-            <Link to={`/tenders/${tender.id}`} className="hover:text-teal-600 transition-colors">
-              {tender.title}
-            </Link>
-          </h3>
-          <p className="text-sm text-gray-500 line-clamp-2">{tender.description}</p>
         </div>
-      </div>
-
-      <div className="flex items-center gap-4 mt-4 text-xs text-gray-400">
-        {tender.location && (
-          <span className="flex items-center gap-1">
-            <MapPin size={12} /> {tender.location}
-          </span>
-        )}
-        <span className="flex items-center gap-1">
-          <Calendar size={12} /> Deadline: {deadline.toLocaleDateString("en-IN")}
+        <span className={`text-xs font-medium px-2 py-1 rounded-full ml-3 whitespace-nowrap ${statusColor[t.status] || "bg-gray-100"}`}>
+          {t.status}
         </span>
-        {!isExpired && (
-          <span className="flex items-center gap-1 text-amber-500 font-medium">
-            <Clock size={12} /> {daysLeft} days left
-          </span>
-        )}
       </div>
-
-      {showBidButton && !isExpired && tender.status === "open" && (
-        <Link
-          to={`/tenders/${tender.id}/bid`}
-          className="mt-4 inline-block px-4 py-2 bg-teal-500 text-white text-sm font-medium rounded-lg hover:bg-teal-600 transition"
-        >
-          Submit Bid
-        </Link>
-      )}
-    </div>
+    </Link>
   );
 }
