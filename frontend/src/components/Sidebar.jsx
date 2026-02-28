@@ -63,19 +63,23 @@ const NAV = {
 export default function Sidebar() {
   const { user } = useAuth();
   const links = NAV[user?.role] || NAV.community;
+  const isStateUser = user?.role === "state_gov";
+  const stateTheme = user?.State?.theme;
+  const topColor = isStateUser ? (stateTheme?.primary || "#0f766e") : "#0f766e";
+  const bottomColor = isStateUser ? (stateTheme?.secondary || "#134e4a") : "#134e4a";
 
   return (
-    <aside className="w-56 bg-gradient-to-b from-teal-700 to-teal-900 min-h-screen flex flex-col py-6 px-3 gap-1">
+    <aside className="w-56 min-h-screen flex flex-col py-6 px-3 gap-1" style={{ background: `linear-gradient(to bottom, ${topColor}, ${bottomColor})` }}>
       <div className="px-4 mb-6">
         <h2 className="text-white font-bold text-lg tracking-wide">TenderGuard</h2>
-        <p className="text-teal-200/60 text-xs mt-0.5">v2 — Anti-Bribery Platform</p>
+        <p className="text-white/60 text-xs mt-0.5">v2 — Anti-Bribery Platform</p>
       </div>
       <nav className="flex flex-col gap-0.5">
         {links.map((l) => <SideLink key={l.to} {...l} />)}
       </nav>
-      <div className="mt-auto px-4 py-3 text-teal-200/40 text-[10px]">
+      <div className="mt-auto px-4 py-3 text-white/50 text-[10px]">
         <p>Signed in as</p>
-        <p className="text-teal-100/80 text-xs font-medium truncate">{user?.name}</p>
+        <p className="text-white/90 text-xs font-medium truncate">{user?.name}</p>
         <p className="capitalize">{user?.role?.replace("_", " ")}</p>
       </div>
     </aside>

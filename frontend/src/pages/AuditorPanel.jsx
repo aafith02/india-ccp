@@ -11,6 +11,7 @@ const statusColors = {
   dismissed: "bg-gray-100 text-gray-500",
   action_taken: "bg-red-100 text-red-600",
 };
+const theme = { primary: "#6d28d9", bg: "#f5f3ff" };
 
 export default function AuditorPanel() {
   const { user } = useAuth();
@@ -73,7 +74,7 @@ export default function AuditorPanel() {
   if (loading) return <div className="p-8 text-gray-500">Loading complaints...</div>;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6" style={{ backgroundColor: theme.bg }}>
       <div>
         <h1 className="text-2xl font-bold text-gray-800">
           {user?.role === "central_gov" ? "Complaint Management" : "NGO Investigations"}
@@ -124,7 +125,7 @@ export default function AuditorPanel() {
                     <option value="">Select NGO to investigate...</option>
                     {ngos.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
                   </select>
-                  <button onClick={() => assignNgo(c.id)} className="px-4 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 transition">
+                  <button onClick={() => assignNgo(c.id)} className="px-4 py-2 text-white text-sm rounded-lg transition" style={{ backgroundColor: theme.primary }}>
                     Assign NGO
                   </button>
                 </div>
@@ -132,7 +133,7 @@ export default function AuditorPanel() {
 
               {/* Show assigned NGO */}
               {c.assignedNgo && (
-                <div className="mt-2 text-sm text-purple-600">
+                <div className="mt-2 text-sm" style={{ color: theme.primary }}>
                   Assigned to: {c.assignedNgo.name}
                 </div>
               )}

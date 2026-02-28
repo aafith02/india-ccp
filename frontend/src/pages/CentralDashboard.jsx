@@ -3,6 +3,8 @@ import api from "../api/client";
 import { toast } from "react-toastify";
 import AnalyticsCharts from "../components/AnalyticsCharts";
 
+const theme = { primary: "#3730a3", bg: "#eef2ff" };
+
 export default function CentralDashboard() {
   const [stats, setStats] = useState(null);
   const [tab, setTab] = useState("overview");
@@ -53,7 +55,7 @@ export default function CentralDashboard() {
   ];
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6" style={{ backgroundColor: theme.bg }}>
       <div>
         <h1 className="text-2xl font-bold text-gray-800">Central Government Dashboard</h1>
         <p className="text-gray-500 text-sm mt-1">National oversight of all tenders and activities</p>
@@ -61,7 +63,12 @@ export default function CentralDashboard() {
 
       <div className="flex gap-2">
         {tabs.map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)} className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === t.key ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600"}`}>
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === t.key ? "text-white" : "bg-gray-100 text-gray-600"}`}
+            style={tab === t.key ? { backgroundColor: theme.primary } : undefined}
+          >
             {t.label}
           </button>
         ))}
@@ -142,7 +149,7 @@ export default function CentralDashboard() {
                   {states.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               )}
-              <button type="submit" className="w-full bg-teal-600 text-white py-2.5 rounded-lg font-medium hover:bg-teal-700 transition">
+              <button type="submit" className="w-full text-white py-2.5 rounded-lg font-medium transition" style={{ backgroundColor: theme.primary }}>
                 Create {memberForm.type === "state" ? "State Officer" : "NGO Member"}
               </button>
             </form>

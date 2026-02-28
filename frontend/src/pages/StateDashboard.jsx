@@ -38,18 +38,26 @@ export default function StateDashboard() {
   const openTenders = tenders.filter(t => t.status === "open").length;
   const activeContracts = contracts.filter(c => c.status === "active").length;
 
+  const stateName = user?.State?.name || "Your State";
+  const stateTheme = user?.State?.theme || { primary: "#0d9488", secondary: "#d4a76a", bg: "#f8fafc" };
+
   const tabs = ["overview", "analytics", "tenders", "contracts", "team"];
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6" style={{ backgroundColor: stateTheme.bg }}>
       <div>
-        <h1 className="text-2xl font-bold text-gray-800">State Dashboard</h1>
+        <h1 className="text-2xl font-bold text-gray-800">{stateName} Dashboard</h1>
         <p className="text-gray-500 text-sm mt-1">Manage tenders, contracts, and verification for your state</p>
       </div>
 
       <div className="flex gap-2">
         {tabs.map(t => (
-          <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-lg text-sm font-medium capitalize ${tab === t ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600"}`}>
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium capitalize ${tab === t ? "text-white" : "bg-gray-100 text-gray-600"}`}
+            style={tab === t ? { backgroundColor: stateTheme.primary } : undefined}
+          >
             {t}
           </button>
         ))}
@@ -59,7 +67,7 @@ export default function StateDashboard() {
         <div className="space-y-6">
           {/* State Finance Summary */}
           {finance && (
-            <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-xl border border-green-200 p-5">
+            <div className="rounded-xl border p-5" style={{ borderColor: stateTheme.secondary, background: `linear-gradient(90deg, ${stateTheme.bg}, #ffffff)` }}>
               <h3 className="text-sm font-semibold text-gray-700 mb-3">State Treasury</h3>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div>
@@ -167,14 +175,14 @@ export default function StateDashboard() {
           <div className="divide-y">
             {members.map(m => (
               <div key={m.id} className="flex items-center gap-3 px-5 py-3">
-                <div className="w-8 h-8 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center text-sm font-bold">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold" style={{ backgroundColor: `${stateTheme.primary}22`, color: stateTheme.primary }}>
                   {m.name?.charAt(0)}
                 </div>
                 <div>
                   <p className="text-sm font-medium text-gray-800">{m.name}</p>
                   <p className="text-xs text-gray-400">{m.email}</p>
                 </div>
-                {m.id === user?.id && <span className="text-xs bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full ml-auto">You</span>}
+                {m.id === user?.id && <span className="text-xs px-2 py-0.5 rounded-full ml-auto" style={{ backgroundColor: `${stateTheme.primary}22`, color: stateTheme.primary }}>You</span>}
               </div>
             ))}
             {members.length === 0 && <p className="p-4 text-gray-400 text-sm">No team members found</p>}

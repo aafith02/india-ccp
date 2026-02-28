@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import api from "../api/client";
 
+const theme = { primary: "#be185d", bg: "#fdf2f8" };
+
 export default function CommunityPortal() {
   const { user } = useAuth();
   const [stateWorks, setStateWorks] = useState(null);
@@ -17,7 +19,7 @@ export default function CommunityPortal() {
   }, []);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6" style={{ backgroundColor: theme.bg }}>
       <div>
         <h1 className="text-2xl font-bold text-gray-800">Community Portal</h1>
         <p className="text-gray-500 text-sm mt-1">View projects in your state and report issues</p>
@@ -39,8 +41,20 @@ export default function CommunityPortal() {
       </div>
 
       <div className="flex gap-2">
-        <button onClick={() => setTab("works")} className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === "works" ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600"}`}>State Works</button>
-        <button onClick={() => setTab("tenders")} className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === "tenders" ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600"}`}>Public Tenders</button>
+        <button
+          onClick={() => setTab("works")}
+          className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === "works" ? "text-white" : "bg-gray-100 text-gray-600"}`}
+          style={tab === "works" ? { backgroundColor: theme.primary } : undefined}
+        >
+          State Works
+        </button>
+        <button
+          onClick={() => setTab("tenders")}
+          className={`px-4 py-2 rounded-lg text-sm font-medium ${tab === "tenders" ? "text-white" : "bg-gray-100 text-gray-600"}`}
+          style={tab === "tenders" ? { backgroundColor: theme.primary } : undefined}
+        >
+          Public Tenders
+        </button>
       </div>
 
       {tab === "works" && (
@@ -65,7 +79,7 @@ export default function CommunityPortal() {
                     <div className="mt-3 bg-gray-50 rounded-lg p-3">
                       <p className="text-sm text-gray-600">Contract: ₹{(t.Contract.total_amount / 100000).toFixed(1)}L — Tranche {t.Contract.current_tranche}/{t.Contract.tranche_count}</p>
                       <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
-                        <div className="bg-teal-500 h-2 rounded-full" style={{ width: `${(t.Contract.current_tranche / t.Contract.tranche_count) * 100}%` }} />
+                        <div className="h-2 rounded-full" style={{ width: `${(t.Contract.current_tranche / t.Contract.tranche_count) * 100}%`, backgroundColor: theme.primary }} />
                       </div>
 
                       {t.Contract.ContractTranches?.length > 0 && (

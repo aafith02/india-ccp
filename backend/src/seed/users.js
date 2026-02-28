@@ -8,19 +8,15 @@ const { sequelize, User, State } = require("../models");
 
 const defaultPassword = "Password123!";
 
-async function getStateId(code) {
-  const state = await State.findOne({ where: { code } });
-  return state ? state.id : null;
-}
-
 async function seed() {
   try {
     await sequelize.sync({ alter: true });
     const password_hash = await bcrypt.hash(defaultPassword, 12);
-
-    const kaId = await getStateId("KA");
-    const mhId = await getStateId("MH");
-    const dlId = await getStateId("DL");
+    const states = await State.findAll({ attributes: ["id", "name", "code"] });
+    const stateByCode = Object.fromEntries(states.map((state) => [state.code, state]));
+    const kaId = stateByCode.KA?.id || null;
+    const mhId = stateByCode.MH?.id || null;
+    const dlId = stateByCode.DL?.id || null;
 
     // We need central to exist first to set created_by
     const [centralUser] = await User.findOrCreate({
@@ -28,13 +24,16 @@ async function seed() {
       defaults: { name: "Central Admin", email: "central@gov.test", role: "central_gov", password_hash },
     });
 
+    const stateGovUsers = states.map((state) => ({
+      name: `${state.name} State Officer`,
+      email: `${String(state.code).toLowerCase()}.state@gov.test`,
+      role: "state_gov",
+      state_id: state.id,
+      created_by: centralUser.id,
+    }));
+
     const users = [
-      // State Gov (created by central)
-      { name: "KA State Officer 1", email: "ka.state1@gov.test", role: "state_gov", state_id: kaId, created_by: centralUser.id },
-      { name: "KA State Officer 2", email: "ka.state2@gov.test", role: "state_gov", state_id: kaId, created_by: centralUser.id },
-      { name: "KA State Officer 3", email: "ka.state3@gov.test", role: "state_gov", state_id: kaId, created_by: centralUser.id },
-      { name: "MH State Officer 1", email: "mh.state1@gov.test", role: "state_gov", state_id: mhId, created_by: centralUser.id },
-      { name: "MH State Officer 2", email: "mh.state2@gov.test", role: "state_gov", state_id: mhId, created_by: centralUser.id },
+      ...stateGovUsers,
 
       // NGO (created by central)
       { name: "Transparency India NGO", email: "ngo1@org.test", role: "auditor_ngo", created_by: centralUser.id },
@@ -60,6 +59,8 @@ async function seed() {
 
     console.log("Seeded test users for all roles (v2)");
     console.log(`Default password: ${defaultPassword}`);
+    console.log("Central login: central@gov.test");
+    console.log(`State gov logins created: ${stateGovUsers.length} (pattern: <state_code>.state@gov.test)`);
     process.exit(0);
   } catch (err) {
     console.error("Seed failed:", err);
