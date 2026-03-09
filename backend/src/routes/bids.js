@@ -4,6 +4,7 @@ const { authenticate } = require("../middleware/auth");
 const { authorize } = require("../middleware/roles");
 const { writeAudit } = require("../middleware/auditLog");
 const { scoreBid, detectCollusion } = require("../services/bidEvaluation");
+const { scoreBidWithAI } = require("../services/aiScoring");
 const { createBidRules, paginationRules, validate } = require("../middleware/validation");
 
 /* ── Calculate proximity score ── */
@@ -41,13 +42,35 @@ router.post("/", authenticate, authorize("contractor"), createBidRules, validate
     // Original proximity score
     const pScore = proximityScore(amount, tender.budget_hidden);
 
-    // AI multi-criteria score from bidEvaluation service
-    const aiScore = scoreBid({
-      amount,
-      budget: tender.budget_hidden,
-      reputation: req.user.reputation || 0,
-      timeline_days: timeline_days || null,
-    });
+    // Fetch state name for AI context
+    const state = await State.findByPk(tender.state_id, { attributes: ["name"] });
+
+    // AI multi-criteria score from Gemini (with land rate prediction)
+    let aiScore, aiResult;
+    try {
+      aiResult = await scoreBidWithAI({
+        amount,
+        budget: tender.budget_hidden,
+        reputation: req.user.reputation || 0,
+        timeline_days: timeline_days || null,
+        location: tender.location,
+        district: tender.district,
+        state: state?.name,
+        category: tender.category,
+        description: tender.description,
+        scope: tender.scope,
+      });
+      aiScore = aiResult.ai_score;
+    } catch (err) {
+      console.error("Gemini AI scoring failed, falling back:", err.message);
+      aiScore = scoreBid({
+        amount,
+        budget: tender.budget_hidden,
+        reputation: req.user.reputation || 0,
+        timeline_days: timeline_days || null,
+      });
+      aiResult = null;
+    }
 
     const bid = await Bid.create({
       tender_id,
@@ -62,10 +85,19 @@ router.post("/", authenticate, authorize("contractor"), createBidRules, validate
     await writeAudit({
       actor_id: req.user.id, actor_role: "contractor", actor_name: req.user.name,
       action: "BID_SUBMITTED", entity_type: "bid", entity_id: bid.id,
-      details: { tender_id, amount, proximity_score: pScore, ai_score: aiScore },
+      details: {
+        tender_id, amount, proximity_score: pScore, ai_score: aiScore,
+        ai_prediction: aiResult?.prediction || null,
+      },
     });
 
-    res.status(201).json({ bid: { ...bid.toJSON(), proximity_score: pScore, ai_score: aiScore } });
+    res.status(201).json({
+      bid: { ...bid.toJSON(), proximity_score: pScore, ai_score: aiScore },
+      ai_analysis: aiResult ? {
+        score_breakdown: aiResult.breakdown,
+        prediction: aiResult.prediction,
+      } : null,
+    });
   } catch (err) {
     console.error("Bid submit error:", err);
     res.status(500).json({ error: "Failed to submit bid" });

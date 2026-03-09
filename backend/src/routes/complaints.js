@@ -6,6 +6,7 @@ const { writeAudit } = require("../middleware/auditLog");
 const { notifyUser, notifyByRole } = require("../services/notificationService");
 const { adjustPoints, adjustReputation, POINTS, REPUTATION } = require("../services/pointsService");
 const { upload, filesToUrls } = require("../middleware/upload");
+const { triageComplaint } = require("../services/aiScoring");
 const { createComplaintRules, investigateRules, paginationRules, validate } = require("../middleware/validation");
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -27,11 +28,19 @@ router.post("/", authenticate, upload.array("files", 5), createComplaintRules, v
       if (Array.isArray(bodyEvidence)) evidence = [...evidence, ...bodyEvidence];
     }
 
+    // AI-powered severity triage (override if not manually set)
+    let aiSeverity = severity || "medium";
+    if (!severity || severity === "medium") {
+      try {
+        aiSeverity = await triageComplaint(description);
+      } catch { /* fallback to user-provided or default */ }
+    }
+
     const complaint = await Complaint.create({
       tender_id: tender_id || null,
       reporter_id: req.user.id,
       subject, description,
-      severity: severity || "medium",
+      severity: aiSeverity,
       evidence,
       geo_location: geo_location ? (typeof geo_location === "string" ? JSON.parse(geo_location) : geo_location) : null,
       status: "submitted",

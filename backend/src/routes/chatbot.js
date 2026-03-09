@@ -1,38 +1,51 @@
 const router = require("express").Router();
 const { authenticate } = require("../middleware/auth");
+const { chat } = require("../services/chatbotService");
+const { predictLandRate } = require("../services/aiScoring");
 
-/*
-  Simple keyword-based chatbot – v2 keeps it minimal.
-  Future: plug in an LLM or Rasa NLU.
-*/
-
-const FAQ = [
-  { keywords: ["tender", "create"], answer: "Only state_gov members can create tenders for their state." },
-  { keywords: ["bid", "submit"], answer: "Verified contractors can bid on tenders in their state. The bid closest to the hidden budget wins." },
-  { keywords: ["kyc", "verify"], answer: "After registering as a contractor, a state government member from your state will verify your KYC documents." },
-  { keywords: ["tranche", "payment"], answer: "Contract amounts are split into tranches. The first tranche is disbursed upfront. Subsequent tranches are released after work proof is verified." },
-  { keywords: ["work", "proof"], answer: "Contractors upload screenshots / documents as proof of work. Assigned state reviewers vote; 51% approval releases the next tranche." },
-  { keywords: ["complaint", "report"], answer: "Community members can report issues. Central gov assigns an NGO to investigate. If valid, the contractor and approving reviewers are penalized." },
-  { keywords: ["points", "reward"], answer: "Contractors earn points for completing projects and approved tranches. Reviewers earn points for voting. Penalties deduct points." },
-  { keywords: ["ngo", "investigate"], answer: "NGO members are assigned by central gov to investigate complaints. They submit findings as confirmed_valid or confirmed_fake." },
-  { keywords: ["ledger", "public", "blockchain"], answer: "All platform actions (except login details) are recorded in a tamper-evident chain-hashed audit ledger viewable by the public." },
-  { keywords: ["register", "signup"], answer: "Community members can register freely. Contractors need to provide KYC data (ID number, business name) and await state verification." },
-];
-
-function findAnswer(message) {
-  const lower = message.toLowerCase();
-  for (const faq of FAQ) {
-    if (faq.keywords.some((k) => lower.includes(k))) return faq.answer;
-  }
-  return "I'm not sure about that. Please contact support or check the public ledger for transparency information.";
-}
-
-/* POST / — ask a question */
+/* ═══════════════════════════════════════════════════════════════════
+   POST / — Gemini-powered multilingual chatbot
+   Detects user's language and responds in the same language.
+   Grounded with system instructions to TenderGuard domain only.
+   ═══════════════════════════════════════════════════════════════════ */
 router.post("/", authenticate, async (req, res) => {
-  const { message } = req.body;
+  const { message, history } = req.body;
   if (!message) return res.status(400).json({ error: "Message required" });
-  const reply = findAnswer(message);
-  res.json({ reply });
+
+  try {
+    const result = await chat(message, {
+      role: req.user.role,
+      state: req.user.state_id ? req.user.State?.name : undefined,
+      history: history || [],
+    });
+    res.json({ reply: result.reply });
+  } catch (err) {
+    console.error("Chatbot error:", err.message);
+    res.json({
+      reply: "I'm experiencing a temporary issue. Please try again in a moment. Meanwhile, you can check the public ledger or contact support.",
+    });
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════════
+   POST /predict-rate — AI land/construction rate prediction
+   Used by state_gov when creating tenders to get fair rate estimate.
+   ═══════════════════════════════════════════════════════════════════ */
+router.post("/predict-rate", authenticate, async (req, res) => {
+  const { location, district, state, category, description, scope } = req.body;
+  if (!location && !district) {
+    return res.status(400).json({ error: "Location or district required" });
+  }
+  try {
+    const prediction = await predictLandRate({ location, district, state, category, description, scope });
+    if (!prediction.success) {
+      return res.status(502).json({ error: "AI prediction unavailable", details: prediction.error });
+    }
+    res.json({ prediction });
+  } catch (err) {
+    console.error("Predict rate error:", err.message);
+    res.status(500).json({ error: "Failed to predict rate" });
+  }
 });
 
 module.exports = router;

@@ -10,9 +10,10 @@
     "seed": "node src/seed/states.js",
     "seed:users": "node src/seed/users.js",
     "seed:dummy": "node src/seed/dummyData.js",
-    "seed:all": "node src/seed/states.js && node src/seed/dummyData.js"
+    "seed:all": "node src/seed/states.js && node src/seed/dummyData.js && node src/seed/users.js"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

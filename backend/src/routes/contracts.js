@@ -7,6 +7,7 @@ const { writeAudit } = require("../middleware/auditLog");
 const { notifyUser } = require("../services/notificationService");
 const { adjustPoints, adjustReputation, POINTS, REPUTATION } = require("../services/pointsService");
 const { scoreBid, rankBids } = require("../services/bidEvaluation");
+const { scoreBidWithAI } = require("../services/aiScoring");
 const { isValidTransition } = require("../middleware/tenderStateMachine");
 const { paginationRules, validate } = require("../middleware/validation");
 
@@ -57,16 +58,37 @@ router.post("/award", authenticate, authorize("state_gov"), async (req, res) => 
 
     if (!bids.length) { await t.rollback(); return res.status(400).json({ error: "No bids found" }); }
 
-    // Score each bid using AI multi-criteria evaluation
-    const scoredBids = bids.map(bid => {
-      const aiScore = scoreBid({
-        amount: bid.amount,
-        budget: tender.budget_hidden,
-        reputation: bid.contractor?.reputation || 0,
-        timeline_days: bid.timeline_days,
-      });
-      return { ...bid.toJSON(), ai_score: aiScore, contractor: bid.contractor };
-    });
+    // Fetch state name for AI context
+    const state = await State.findByPk(tender.state_id, { attributes: ["name"], transaction: t });
+
+    // Score each bid using Gemini AI (land rate prediction + multi-criteria)
+    const scoredBids = [];
+    for (const bid of bids) {
+      let aiScore;
+      try {
+        const aiResult = await scoreBidWithAI({
+          amount: bid.amount,
+          budget: tender.budget_hidden,
+          reputation: bid.contractor?.reputation || 0,
+          timeline_days: bid.timeline_days,
+          location: tender.location,
+          district: tender.district,
+          state: state?.name,
+          category: tender.category,
+          description: tender.description,
+          scope: tender.scope,
+        });
+        aiScore = aiResult.ai_score;
+      } catch {
+        aiScore = scoreBid({
+          amount: bid.amount,
+          budget: tender.budget_hidden,
+          reputation: bid.contractor?.reputation || 0,
+          timeline_days: bid.timeline_days,
+        });
+      }
+      scoredBids.push({ ...bid.toJSON(), ai_score: aiScore, contractor: bid.contractor });
+    }
 
     // Rank bids by AI score
     const ranked = rankBids(scoredBids);
@@ -130,11 +152,11 @@ router.post("/award", authenticate, authorize("state_gov"), async (req, res) => 
     await tender.update({ status: "in_progress" }, { transaction: t });
 
     // Deduct from state balance
-    const state = await State.findByPk(tender.state_id, { transaction: t });
-    if (state) {
-      await state.update({
-        balance: parseFloat(state.balance || 0) - totalAmount,
-        total_allocated: parseFloat(state.total_allocated || 0) + totalAmount,
+    const stateRecord = await State.findByPk(tender.state_id, { transaction: t });
+    if (stateRecord) {
+      await stateRecord.update({
+        balance: parseFloat(stateRecord.balance || 0) - totalAmount,
+        total_allocated: parseFloat(stateRecord.total_allocated || 0) + totalAmount,
       }, { transaction: t });
     }
 
