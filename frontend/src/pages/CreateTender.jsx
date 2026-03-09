@@ -15,12 +15,35 @@ export default function CreateTender() {
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [prediction, setPrediction] = useState(null);
+  const [predicting, setPredicting] = useState(false);
 
   useEffect(() => {
     api.get("/states").then(r => setStates(r.data.states || [])).catch(() => {});
   }, []);
 
   const set = (k) => (e) => setForm(p => ({ ...p, [k]: e.target.value }));
+
+  async function predictRate() {
+    if (!form.location && !form.district) return;
+    setPredicting(true);
+    setPrediction(null);
+    try {
+      const stateName = states.find(s => s.id === form.state_id)?.name;
+      const { data } = await api.post("/chatbot/predict-rate", {
+        location: form.location,
+        district: form.district,
+        state: stateName,
+        category: form.category,
+        description: form.description,
+        scope: form.scope,
+      });
+      setPrediction(data.prediction);
+    } catch {
+      setPrediction({ error: true });
+    }
+    setPredicting(false);
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -93,8 +116,40 @@ export default function CreateTender() {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Hidden Budget (₹)</label>
-            <input type="number" className="w-full border rounded-lg px-4 py-2.5 text-sm" value={form.budget_hidden} onChange={set("budget_hidden")} required />
+            <div className="flex gap-2">
+              <input type="number" className="flex-1 border rounded-lg px-4 py-2.5 text-sm" value={form.budget_hidden} onChange={set("budget_hidden")} required />
+              <button type="button" onClick={predictRate} disabled={predicting || (!form.location && !form.district)}
+                className="px-3 py-2 bg-amber-500 text-white rounded-lg text-xs font-medium hover:bg-amber-600 disabled:opacity-40 transition whitespace-nowrap">
+                {predicting ? "Predicting..." : "AI Estimate"}
+              </button>
+            </div>
             <p className="text-xs text-gray-400 mt-1">Not visible to bidders — closest bid wins</p>
+            {prediction && !prediction.error && (
+              <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs space-y-1">
+                <div className="font-semibold text-amber-800 flex items-center gap-1">
+                  🤖 AI Predicted Fair Cost
+                </div>
+                <div className="text-amber-900 text-base font-bold">
+                  ₹{Number(prediction.total_estimated_cost).toLocaleString("en-IN")}
+                </div>
+                <div className="text-amber-700">
+                  Rate: ₹{Number(prediction.estimated_rate_per_unit).toLocaleString("en-IN")} / {prediction.unit}
+                </div>
+                <div className="text-amber-600">
+                  Range: ₹{Number(prediction.rate_range?.low).toLocaleString("en-IN")} – ₹{Number(prediction.rate_range?.high).toLocaleString("en-IN")}
+                </div>
+                <div className="text-amber-600 italic">{prediction.reasoning}</div>
+                <div className="text-amber-500">Confidence: {Math.round((prediction.confidence || 0) * 100)}%</div>
+                <button type="button"
+                  onClick={() => setForm(p => ({ ...p, budget_hidden: Math.round(prediction.total_estimated_cost) }))}
+                  className="mt-1 px-3 py-1 bg-amber-500 text-white rounded text-xs hover:bg-amber-600 transition">
+                  Use This Estimate
+                </button>
+              </div>
+            )}
+            {prediction?.error && (
+              <p className="mt-1 text-xs text-red-500">AI prediction unavailable. Set budget manually.</p>
+            )}
           </div>
         </div>
 
